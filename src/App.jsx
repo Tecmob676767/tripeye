@@ -4,6 +4,7 @@ import confetti from 'canvas-confetti';
 import Navbar from './components/Navbar';
 import MapTracker from './components/MapTracker';
 import TripHUD from './components/TripHUD';
+import NavigationBanner from './components/NavigationBanner';
 import ArrivalAlertBanner from './components/ArrivalAlertBanner';
 import ChatDrawer from './components/ChatDrawer';
 import TripDetailsModal from './components/TripDetailsModal';
@@ -23,7 +24,7 @@ export default function App() {
   });
   const [isAuthOpen, setIsAuthOpen] = useState(!currentUser);
 
-  // Active Trip Room & Destination from URL params
+  // Active Trip Room & Destination from URL
   const [activeTripCode, setActiveTripCode] = useState(() => {
     const params = new URLSearchParams(window.location.search);
     return params.get('trip') || 'TEMPLE-101';
@@ -42,6 +43,10 @@ export default function App() {
   // Multiple Places to Visit (Itinerary)
   const [itinerary, setItinerary] = useState(() => [PRESET_DESTINATIONS[0]]);
 
+  // Navigation & Route data
+  const [routeData, setRouteData] = useState(null);
+  const [roadRouteCoordinates, setRoadRouteCoordinates] = useState([]);
+
   // Modals & Panels
   const [isTripRoomOpen, setIsTripRoomOpen] = useState(false);
   const [isPlacesSearchOpen, setIsPlacesSearchOpen] = useState(false);
@@ -54,7 +59,7 @@ export default function App() {
   // Connected Peers
   const [friendUser, setFriendUser] = useState(null);
 
-  // Real GPS Positions [lat, lng]
+  // Real GPS Positions
   const [userPos, setUserPos] = useState(null);
   const [friendPos, setFriendPos] = useState(null);
 
@@ -72,6 +77,34 @@ export default function App() {
 
   // Socket
   const socketRef = useRef(null);
+
+  // Fetch Real Road Navigation Route
+  const fetchRoadRoute = async (fromCoords, toCoords) => {
+    if (!fromCoords || !toCoords) return;
+    try {
+      const serverUrl = window.location.hostname === 'localhost'
+        ? 'http://localhost:3001'
+        : `http://${window.location.hostname}:3001`;
+
+      const res = await fetch(`${serverUrl}/api/route?fromLat=${fromCoords[0]}&fromLng=${fromCoords[1]}&toLat=${toCoords[0]}&toLng=${toCoords[1]}`);
+      const data = await res.json();
+      if (data.routes && data.routes.length > 0) {
+        setRouteData(data.routes[0]);
+        // Convert GeoJSON [lng, lat] to Leaflet [lat, lng]
+        const latLngs = data.routes[0].geometry.coordinates.map(pt => [pt[1], pt[0]]);
+        setRoadRouteCoordinates(latLngs);
+      }
+    } catch (e) {
+      console.warn('Navigation route error:', e);
+    }
+  };
+
+  // Recompute route when userPos or destination changes
+  useEffect(() => {
+    if (userPos && destination) {
+      fetchRoadRoute(userPos, [destination.lat, destination.lng]);
+    }
+  }, [userPos, destination]);
 
   // Connect Socket.io
   useEffect(() => {
@@ -213,7 +246,6 @@ export default function App() {
     setDestination(dest);
     hasTriggeredArrivalRef.current = false;
     
-    // Add to itinerary if not present
     setItinerary(prev => {
       const exists = prev.some(p => p.id === dest.id);
       const updated = exists ? prev : [...prev, dest];
@@ -335,7 +367,7 @@ export default function App() {
         }}
       />
 
-      {/* Main Map */}
+      {/* Main Map with Google Maps Tiles */}
       <main className="relative flex-1 w-full h-full overflow-hidden">
         {/* Floating Proximity HUD */}
         <TripHUD
@@ -350,6 +382,13 @@ export default function App() {
           onCallFriend={handleStartCall}
         />
 
+        {/* Real Turn-by-Turn Navigation HUD */}
+        <NavigationBanner
+          routeData={routeData}
+          userPos={userPos}
+          destination={destination}
+        />
+
         {/* Arrival Banner */}
         <ArrivalAlertBanner
           isPriyaArrived={isFriendArrived || isUserArrived}
@@ -360,7 +399,7 @@ export default function App() {
           }}
         />
 
-        {/* Map Tracker */}
+        {/* Real Google Maps Tracker */}
         <MapTracker
           destination={destination}
           itinerary={itinerary}
@@ -374,6 +413,7 @@ export default function App() {
           isUserArrived={isUserArrived}
           isFriendArrived={isFriendArrived}
           areMet={areMet}
+          roadRouteCoordinates={roadRouteCoordinates}
           onMapClickToSetPos={(coords) => {
             setUserPos(coords);
             if (socketRef.current && activeTripCode) {
@@ -384,19 +424,6 @@ export default function App() {
             }
           }}
         />
-
-        {/* Bottom Helper Bar */}
-        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 px-3.5 py-1.5 rounded-full bg-slate-900/90 backdrop-blur-md border border-slate-800 text-[11px] text-slate-300 flex items-center gap-2 shadow-xl">
-          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
-          <span>Live GPS</span>
-          <span className="text-slate-500">•</span>
-          <button
-            onClick={() => setIsPlacesSearchOpen(true)}
-            className="text-amber-400 hover:underline font-bold"
-          >
-            Explore all {itinerary.length} places to visit
-          </button>
-        </div>
       </main>
 
       {/* Real-time In-Trip Chat */}
@@ -417,7 +444,7 @@ export default function App() {
         destination={destination}
       />
 
-      {/* All Places to Visit Search & Catalog Modal */}
+      {/* Places Search Modal */}
       <PlaceSearchModal
         isOpen={isPlacesSearchOpen}
         onClose={() => setIsPlacesSearchOpen(false)}
@@ -427,7 +454,7 @@ export default function App() {
         itinerary={itinerary}
       />
 
-      {/* Real Share Modal (WhatsApp, QR Code, Wi-Fi IP) */}
+      {/* Real Share Modal */}
       <ShareModal
         isOpen={isShareModalOpen}
         onClose={() => setIsShareModalOpen(false)}
@@ -462,7 +489,7 @@ export default function App() {
         }}
       />
 
-      {/* Audio & Phone Call Modal */}
+      {/* Audio Call Modal */}
       <CallModal
         isOpen={isCallOpen}
         onClose={() => setIsCallOpen(false)}

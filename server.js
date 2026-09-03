@@ -6,6 +6,26 @@ import cors from 'cors';
 const app = express();
 app.use(cors());
 
+// Turn-by-Turn routing proxy
+app.get('/api/route', async (req, res) => {
+  const { fromLat, fromLng, toLat, toLng } = req.query;
+  if (!fromLat || !fromLng || !toLat || !toLng) {
+    return res.status(400).json({ error: 'Missing coordinates' });
+  }
+
+  try {
+    const url = `https://router.project-osrm.org/route/v1/driving/${fromLng},${fromLat};${toLng},${toLat}?overview=full&geometries=geojson&steps=true`;
+    const response = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) TripeyeNavigation' }
+    });
+    const data = await response.json();
+    res.json(data);
+  } catch (err) {
+    console.error('Route fetch error:', err);
+    res.status(500).json({ error: 'Failed to compute route' });
+  }
+});
+
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
@@ -113,5 +133,5 @@ io.on('connection', (socket) => {
 
 const PORT = 3001;
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Tripeye Signaling Server running on port ${PORT}`);
+  console.log(`Tripeye Server with Navigation Routing running on port ${PORT}`);
 });

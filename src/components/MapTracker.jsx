@@ -1,6 +1,7 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import { formatDistance } from '../utils/geo';
+import { Layers, Map as MapIcon } from 'lucide-react';
 
 export default function MapTracker({
   destination,
@@ -15,20 +16,40 @@ export default function MapTracker({
   isUserArrived,
   isFriendArrived,
   areMet,
+  roadRouteCoordinates,
   onMapClickToSetPos
 }) {
   const mapContainerRef = useRef(null);
   const mapInstanceRef = useRef(null);
+  const tileLayerRef = useRef(null);
+
   const userMarkerRef = useRef(null);
   const friendMarkerRef = useRef(null);
   const templeMarkerRef = useRef(null);
   const extraMarkersRef = useRef([]);
   const geofenceCircleRef = useRef(null);
-  const userPolylineRef = useRef(null);
+  const roadPolylineRef = useRef(null);
   const friendPolylineRef = useRef(null);
-  const betweenPolylineRef = useRef(null);
 
-  // Initialize Leaflet Map
+  // Map style state: 'roadmap' (Google Standard), 'hybrid' (Google Satellite with labels), 'terrain'
+  const [mapStyle, setMapStyle] = useState('roadmap');
+
+  // Google Maps tile URL templates (No API Key watermark, 100% genuine Google Maps tiles)
+  const getGoogleTileUrl = (style) => {
+    switch (style) {
+      case 'hybrid':
+        return 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}'; // Satellite + Roads & Names
+      case 'satellite':
+        return 'https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}'; // Pure Satellite
+      case 'terrain':
+        return 'https://mt1.google.com/vt/lyrs=p&x={x}&y={y}&z={z}'; // Terrain
+      case 'roadmap':
+      default:
+        return 'https://mt1.google.com/vt/lyrs=m&hl=en&x={x}&y={y}&z={z}'; // Standard Google Maps
+    }
+  };
+
+  // Initialize Leaflet Map with Google Maps Tiles
   useEffect(() => {
     if (!mapContainerRef.current) return;
 
@@ -43,9 +64,10 @@ export default function MapTracker({
         attributionControl: false
       });
 
-      L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-        maxZoom: 19,
-        subdomains: 'abcd'
+      // Add Real Google Maps Tile Layer
+      tileLayerRef.current = L.tileLayer(getGoogleTileUrl('roadmap'), {
+        maxZoom: 20,
+        subdomains: ['mt0', 'mt1', 'mt2', 'mt3']
       }).addTo(map);
 
       L.control.zoom({ position: 'topright' }).addTo(map);
@@ -60,7 +82,22 @@ export default function MapTracker({
     }
   }, []);
 
-  // Update Main Destination & Geofence
+  // Update Tile Layer when style switches
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map) return;
+
+    if (tileLayerRef.current) {
+      tileLayerRef.current.remove();
+    }
+
+    tileLayerRef.current = L.tileLayer(getGoogleTileUrl(mapStyle), {
+      maxZoom: 20,
+      subdomains: ['mt0', 'mt1', 'mt2', 'mt3']
+    }).addTo(map);
+  }, [mapStyle]);
+
+  // Update Destination & Geofence
   useEffect(() => {
     const map = mapInstanceRef.current;
     if (!map || !destination) return;
@@ -70,8 +107,8 @@ export default function MapTracker({
     if (geofenceCircleRef.current) geofenceCircleRef.current.remove();
     geofenceCircleRef.current = L.circle([destination.lat, destination.lng], {
       radius: destination.geofenceRadius,
-      color: '#f59e0b',
-      fillColor: '#f59e0b',
+      color: '#ea580c',
+      fillColor: '#ea580c',
       fillOpacity: 0.15,
       weight: 2,
       dashArray: '6, 8'
@@ -98,14 +135,56 @@ export default function MapTracker({
       .addTo(map)
       .bindPopup(`
         <div class="p-1 text-xs">
-          <b class="text-amber-400 text-sm block">${destination.name}</b>
-          <p class="text-slate-300 mt-1">${destination.landmarkName}</p>
+          <b class="text-amber-500 text-sm block">${destination.name}</b>
+          <p class="text-slate-200 mt-1">${destination.landmarkName}</p>
           <p class="text-slate-400 mt-1 text-[11px]">${destination.notes || ''}</p>
         </div>
       `);
   }, [destination]);
 
-  // Render Extra Itinerary Stops on Map
+  // Render Real Road Route Geometry (Blue Navigation Line snapped to streets)
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map) return;
+
+    if (roadPolylineRef.current) roadPolylineRef.current.remove();
+
+    if (roadRouteCoordinates && roadRouteCoordinates.length > 0) {
+      // Real turn-by-turn road route
+      roadPolylineRef.current = L.polyline(roadRouteCoordinates, {
+        color: '#2563eb', // Google Blue
+        weight: 6,
+        opacity: 0.85,
+        lineJoin: 'round'
+      }).addTo(map);
+    } else if (userPos && destination) {
+      // Fallback dashed line
+      roadPolylineRef.current = L.polyline([userPos, [destination.lat, destination.lng]], {
+        color: '#2563eb',
+        weight: 4,
+        opacity: 0.6,
+        dashArray: '6, 8'
+      }).addTo(map);
+    }
+  }, [roadRouteCoordinates, userPos, destination]);
+
+  // Friend Polyline
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map) return;
+
+    if (friendPolylineRef.current) friendPolylineRef.current.remove();
+    if (friendPos && destination) {
+      friendPolylineRef.current = L.polyline([friendPos, [destination.lat, destination.lng]], {
+        color: '#ec4899',
+        weight: 4,
+        opacity: 0.6,
+        dashArray: '5, 8'
+      }).addTo(map);
+    }
+  }, [friendPos, destination]);
+
+  // Itinerary Extra Markers
   useEffect(() => {
     const map = mapInstanceRef.current;
     if (!map) return;
@@ -116,7 +195,7 @@ export default function MapTracker({
     if (!itinerary || itinerary.length <= 1) return;
 
     itinerary.forEach((place, index) => {
-      if (place.id === destination?.id) return; // Already primary
+      if (place.id === destination?.id) return;
 
       const stopIcon = L.divIcon({
         className: 'custom-stop-icon',
@@ -134,14 +213,7 @@ export default function MapTracker({
         iconAnchor: [15, 15]
       });
 
-      const marker = L.marker([place.lat, place.lng], { icon: stopIcon })
-        .addTo(map)
-        .bindPopup(`
-          <div class="p-1 text-xs">
-            <b class="text-amber-400 block">Stop ${index + 1}: ${place.name}</b>
-            <p class="text-slate-300 mt-1">${place.landmarkName || ''}</p>
-          </div>
-        `);
+      const marker = L.marker([place.lat, place.lng], { icon: stopIcon }).addTo(map);
       extraMarkersRef.current.push(marker);
     });
   }, [itinerary, destination]);
@@ -153,11 +225,11 @@ export default function MapTracker({
 
     const userHtml = `
       <div class="tripeye-avatar-marker cursor-pointer pointer-events-auto">
-        <div class="tripeye-ping bg-sky-400/40"></div>
-        <div class="relative w-10 h-10 rounded-full bg-sky-500 border-2 border-white shadow-lg flex items-center justify-center text-white font-extrabold text-sm z-10 ${isUserArrived ? 'ring-4 ring-emerald-400' : ''}">
+        <div class="tripeye-ping bg-blue-500/40"></div>
+        <div class="relative w-10 h-10 rounded-full bg-blue-600 border-2 border-white shadow-lg flex items-center justify-center text-white font-extrabold text-sm z-10 ${isUserArrived ? 'ring-4 ring-emerald-400' : ''}">
           ${currentUser ? currentUser.name.charAt(0).toUpperCase() : 'ME'}
         </div>
-        <div class="mt-1 bg-slate-900/90 text-sky-300 text-[10px] font-bold px-2 py-0.5 rounded-full border border-sky-500/30 whitespace-nowrap shadow z-10 flex items-center gap-1">
+        <div class="mt-1 bg-slate-900/90 text-blue-300 text-[10px] font-bold px-2 py-0.5 rounded-full border border-blue-500/30 whitespace-nowrap shadow z-10 flex items-center gap-1">
           <span>You (${currentUser ? currentUser.name.split(' ')[0] : 'Me'})</span>
           ${userDist ? `<span class="text-slate-400">• ${formatDistance(userDist)}</span>` : ''}
         </div>
@@ -179,7 +251,7 @@ export default function MapTracker({
     }
   }, [userPos, userDist, currentUser, isUserArrived]);
 
-  // Remote Friend Marker
+  // Friend Marker
   useEffect(() => {
     const map = mapInstanceRef.current;
     if (!map) return;
@@ -194,8 +266,8 @@ export default function MapTracker({
 
     const friendHtml = `
       <div class="tripeye-avatar-marker cursor-pointer pointer-events-auto">
-        <div class="tripeye-ping bg-pink-400/40"></div>
-        <div class="relative w-10 h-10 rounded-full bg-pink-500 border-2 border-white shadow-lg flex items-center justify-center text-white font-extrabold text-sm z-10 ${isFriendArrived ? 'ring-4 ring-emerald-400 animate-bounce' : ''}">
+        <div class="tripeye-ping bg-pink-500/40"></div>
+        <div class="relative w-10 h-10 rounded-full bg-pink-600 border-2 border-white shadow-lg flex items-center justify-center text-white font-extrabold text-sm z-10 ${isFriendArrived ? 'ring-4 ring-emerald-400 animate-bounce' : ''}">
           ${friendUser.name.charAt(0).toUpperCase()}
         </div>
         <div class="mt-1 bg-slate-900/90 text-pink-300 text-[10px] font-bold px-2 py-0.5 rounded-full border border-pink-500/30 whitespace-nowrap shadow z-10 flex items-center gap-1">
@@ -220,43 +292,6 @@ export default function MapTracker({
     }
   }, [friendPos, friendDist, friendUser, isFriendArrived]);
 
-  // Polylines
-  useEffect(() => {
-    const map = mapInstanceRef.current;
-    if (!map || !destination) return;
-    const destPos = [destination.lat, destination.lng];
-
-    if (userPolylineRef.current) userPolylineRef.current.remove();
-    if (userPos) {
-      userPolylineRef.current = L.polyline([userPos, destPos], {
-        color: '#38bdf8',
-        weight: 3,
-        opacity: 0.6,
-        dashArray: '5, 8'
-      }).addTo(map);
-    }
-
-    if (friendPolylineRef.current) friendPolylineRef.current.remove();
-    if (friendPos) {
-      friendPolylineRef.current = L.polyline([friendPos, destPos], {
-        color: '#ec4899',
-        weight: 3,
-        opacity: 0.6,
-        dashArray: '5, 8'
-      }).addTo(map);
-    }
-
-    if (betweenPolylineRef.current) betweenPolylineRef.current.remove();
-    if (userPos && friendPos) {
-      betweenPolylineRef.current = L.polyline([userPos, friendPos], {
-        color: areMet ? '#10b981' : '#64748b',
-        weight: 2,
-        opacity: 0.5,
-        dashArray: '2, 6'
-      }).addTo(map);
-    }
-  }, [userPos, friendPos, destination, areMet]);
-
   const handleRecenter = () => {
     const map = mapInstanceRef.current;
     if (!map) return;
@@ -275,12 +310,36 @@ export default function MapTracker({
   return (
     <div className="relative w-full h-full flex-1">
       <div ref={mapContainerRef} className="w-full h-full z-0" />
-      <button
-        onClick={handleRecenter}
-        className="absolute top-4 left-4 z-10 bg-slate-900/90 hover:bg-slate-800 text-slate-200 border border-slate-700 px-3 py-1.5 rounded-xl shadow-xl text-xs font-semibold flex items-center gap-1.5 backdrop-blur-sm transition active:scale-95"
-      >
-        <span>🎯 Recenter All</span>
-      </button>
+
+      {/* Top Left: Recenter & Google Map Style Switcher */}
+      <div className="absolute top-4 left-4 z-10 flex items-center gap-2">
+        <button
+          onClick={handleRecenter}
+          className="bg-slate-900/95 hover:bg-slate-800 text-slate-200 border border-slate-700 px-3 py-1.5 rounded-xl shadow-xl text-xs font-semibold flex items-center gap-1.5 backdrop-blur-sm transition active:scale-95"
+        >
+          <span>🎯 Recenter</span>
+        </button>
+
+        {/* Google Maps Layer Switcher */}
+        <div className="bg-slate-900/95 border border-slate-700 p-0.5 rounded-xl shadow-xl flex items-center backdrop-blur-sm text-[11px] font-bold">
+          <button
+            onClick={() => setMapStyle('roadmap')}
+            className={`px-2.5 py-1 rounded-lg transition ${
+              mapStyle === 'roadmap' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            Google Map
+          </button>
+          <button
+            onClick={() => setMapStyle('hybrid')}
+            className={`px-2.5 py-1 rounded-lg transition ${
+              mapStyle === 'hybrid' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            Satellite
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
