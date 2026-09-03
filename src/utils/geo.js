@@ -30,62 +30,52 @@ export function calculateETA(distanceMeters, speedKmh = 25) {
   return `${hours}h ${remainingMins}m`;
 }
 
-// Interpolate point along route based on progress 0.0 -> 1.0
-export function interpolateRoute(pathPoints, progress) {
-  if (!pathPoints || pathPoints.length === 0) return [0, 0];
-  if (progress <= 0) return pathPoints[0];
-  if (progress >= 1) return pathPoints[pathPoints.length - 1];
-
-  const totalSegments = pathPoints.length - 1;
-  const rawIndex = progress * totalSegments;
-  const segIndex = Math.min(Math.floor(rawIndex), totalSegments - 1);
-  const segFraction = rawIndex - segIndex;
-
-  const p1 = pathPoints[segIndex];
-  const p2 = pathPoints[segIndex + 1];
-
-  const lat = p1[0] + (p2[0] - p1[0]) * segFraction;
-  const lng = p1[1] + (p2[1] - p1[1]) * segFraction;
-  return [lat, lng];
+// Free live search using OpenStreetMap Nominatim
+export async function searchPlacesLive(query) {
+  if (!query || query.trim().length < 2) return [];
+  try {
+    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=6&addressdetails=1`);
+    const data = await res.json();
+    return data.map((item, index) => ({
+      id: 'custom_' + item.place_id,
+      name: item.name || item.display_name.split(',')[0],
+      landmarkName: item.display_name.split(',').slice(0, 2).join(','),
+      lat: parseFloat(item.lat),
+      lng: parseFloat(item.lon),
+      geofenceRadius: 110,
+      notes: 'Custom meetup destination: ' + item.display_name,
+      dressCode: 'General respectful attire.',
+      openingHours: 'Check local timings'
+    }));
+  } catch (e) {
+    console.warn('Nominatim search error:', e);
+    return [];
+  }
 }
 
+// Comprehensive catalog of famous temples & visit places
 export const PRESET_DESTINATIONS = [
   {
     id: 'akshardham',
     name: 'Akshardham Temple, Delhi',
-    landmarkName: 'Main North Gate & Shoe Deposit 3',
+    category: 'Temple',
+    landmarkName: 'Main North Gate & Shoe Stall 3',
     lat: 28.6127,
     lng: 77.2773,
     geofenceRadius: 110,
-    notes: 'Meet right by the Shoe Stall #3 and Cloakroom entrance before entering security queue.',
-    dressCode: 'Cover shoulders and knees. No electronic gadgets allowed inside sanctum.',
+    notes: 'Meet right by the Shoe Stall #3 and Cloakroom before entering security queue.',
+    dressCode: 'Cover shoulders and knees. No phones or electronics inside sanctum.',
     openingHours: '9:30 AM – 8:00 PM (Aarti at 6:30 PM)',
     checklist: [
       { id: 1, text: 'Deposit Mobile Phones at Cloakroom', checked: false, owner: 'Both' },
       { id: 2, text: 'Collect Prasad Box from Counter', checked: false, owner: 'Rahul' },
-      { id: 3, text: 'Drop shoes at Stall #3', checked: false, owner: 'Priya' },
-      { id: 4, text: 'Carry Original Govt. Photo ID', checked: true, owner: 'Both' }
-    ],
-    rahulPath: [
-      [28.6320, 77.2580],
-      [28.6270, 77.2625],
-      [28.6210, 77.2670],
-      [28.6170, 77.2720],
-      [28.6140, 77.2755],
-      [28.6127, 77.2773]
-    ],
-    priyaPath: [
-      [28.5980, 77.2940],
-      [28.6025, 77.2895],
-      [28.6070, 77.2850],
-      [28.6105, 77.2810],
-      [28.6120, 77.2785],
-      [28.6127, 77.2773]
+      { id: 3, text: 'Drop shoes at Stall #3', checked: false, owner: 'Friend' }
     ]
   },
   {
     id: 'meenakshi',
     name: 'Meenakshi Amman Temple, Madurai',
+    category: 'Temple',
     landmarkName: 'East Gopuram (Tower) Gate',
     lat: 9.9195,
     lng: 78.1193,
@@ -94,23 +84,174 @@ export const PRESET_DESTINATIONS = [
     dressCode: 'Traditional Indian attire mandatory (Dhoti/Kurta for men, Sarees/Salwar for women).',
     openingHours: '5:00 AM – 12:30 PM, 4:00 PM – 10:00 PM',
     checklist: [
-      { id: 1, text: 'Buy Madurai Malli Jasmine Garlands', checked: false, owner: 'Priya' },
-      { id: 2, text: 'Ghee deepams for inner sanctum', checked: false, owner: 'Rahul' },
-      { id: 3, text: 'Special Darshan queue tokens', checked: true, owner: 'Rahul' }
-    ],
-    rahulPath: [
-      [9.9320, 78.1090],
-      [9.9270, 78.1130],
-      [9.9230, 78.1165],
-      [9.9210, 78.1180],
-      [9.9195, 78.1193]
-    ],
-    priyaPath: [
-      [9.9090, 78.1290],
-      [9.9130, 78.1250],
-      [9.9160, 78.1225],
-      [9.9180, 78.1205],
-      [9.9195, 78.1193]
+      { id: 1, text: 'Buy Madurai Malli Jasmine Garlands', checked: false, owner: 'Both' },
+      { id: 2, text: 'Ghee deepams for inner sanctum', checked: false, owner: 'Both' }
     ]
+  },
+  {
+    id: 'tirupati',
+    name: 'Tirupati Balaji (Venkateswara Swamy)',
+    category: 'Temple',
+    landmarkName: 'Vaikuntam Queue Complex 1 Gate',
+    lat: 13.6833,
+    lng: 79.3472,
+    geofenceRadius: 120,
+    notes: 'Meet outside Vaikuntam Queue Complex entrance near Laddu distribution counter.',
+    dressCode: 'Strict traditional dress: Dhoti/Kurta or Pyjama, Saree or Chudidar with Dupatta.',
+    openingHours: 'Open 24 Hours for Sarva Darshan queues',
+    checklist: [
+      { id: 1, text: 'Keep original Aadhaar card handy', checked: true, owner: 'Both' },
+      { id: 2, text: 'Collect Laddu tokens after Darshan', checked: false, owner: 'Both' }
+    ]
+  },
+  {
+    id: 'kedarnath',
+    name: 'Kedarnath Jyotirlinga, Uttarakhand',
+    category: 'Temple',
+    landmarkName: 'Main Mandir Courtyard (Nandi Statue)',
+    lat: 30.7352,
+    lng: 79.0669,
+    geofenceRadius: 100,
+    notes: 'Meet beside the giant stone Nandi bull statue directly facing the temple entrance.',
+    dressCode: 'Heavy woolens, windcheater, thermal wear. Strict altitude caution.',
+    openingHours: '4:00 AM – 7:00 PM (May to November)',
+    checklist: [
+      { id: 1, text: 'Yatra Registration Slip / Biometric Card', checked: true, owner: 'Both' },
+      { id: 2, text: 'Raincoat & Trekking Poles', checked: false, owner: 'Both' }
+    ]
+  },
+  {
+    id: 'golden_temple',
+    name: 'Golden Temple (Harmandir Sahib), Amritsar',
+    category: 'Temple',
+    landmarkName: 'Ghanta Ghar (Clock Tower) Gate',
+    lat: 31.6200,
+    lng: 74.8765,
+    geofenceRadius: 110,
+    notes: 'Meet near Clock Tower entrance next to the Sarovar water wash and head scarves stall.',
+    dressCode: 'Head must be covered at all times (scarves available). Barefoot through water trough.',
+    openingHours: 'Open 24 Hours (Langar hall continuous)',
+    checklist: [
+      { id: 1, text: 'Wear head scarf / rumaal', checked: false, owner: 'Both' },
+      { id: 2, text: 'Deposit shoes at Jora Ghar', checked: false, owner: 'Both' },
+      { id: 3, text: 'Visit Guru Ka Langar together', checked: false, owner: 'Both' }
+    ]
+  },
+  {
+    id: 'kashi_vishwanath',
+    name: 'Kashi Vishwanath Temple, Varanasi',
+    category: 'Temple',
+    landmarkName: 'Gate No. 4 (Chhattadwar / Ganga Corridor)',
+    lat: 25.3109,
+    lng: 83.0107,
+    geofenceRadius: 100,
+    notes: 'Meet at Corridor Gate 4 on the riverside promenade before entering queue.',
+    dressCode: 'Traditional Indian attire for Sparsh Darshan. Lockers available in Corridor.',
+    openingHours: '3:00 AM – 11:00 PM (Mangala Aarti at 3:00 AM)',
+    checklist: [
+      { id: 1, text: 'Locker token for belongings', checked: false, owner: 'Both' },
+      { id: 2, text: 'Ganga Jal container for Abhishekam', checked: false, owner: 'Both' }
+    ]
+  },
+  {
+    id: 'somnath',
+    name: 'Somnath Temple, Gujarat',
+    category: 'Temple',
+    landmarkName: 'Main Sea-Facing Entrance Gate',
+    lat: 20.8880,
+    lng: 70.4012,
+    geofenceRadius: 120,
+    notes: 'Meet at the grand entrance arch facing the Arabian Sea.',
+    dressCode: 'Modest attire. Electronic items strictly prohibited.',
+    openingHours: '6:00 AM – 10:00 PM (Light & Sound Show at 8:00 PM)',
+    checklist: [
+      { id: 1, text: 'Watch evening Light & Sound show', checked: false, owner: 'Both' }
+    ]
+  },
+  {
+    id: 'jagannath_puri',
+    name: 'Jagannath Temple, Puri, Odisha',
+    category: 'Temple',
+    landmarkName: 'Singhadwara (Lion Gate)',
+    lat: 19.8049,
+    lng: 85.8179,
+    geofenceRadius: 110,
+    notes: 'Meet right in front of the Aruna Stambha (Sun Pillar) outside Lion Gate.',
+    dressCode: 'Strict Indian traditional attire. Foreign nationals restricted to library roof.',
+    openingHours: '5:30 AM – 10:00 PM',
+    checklist: [
+      { id: 1, text: 'Mahaprasad (Khaja) tasting at Ananda Bazar', checked: false, owner: 'Both' }
+    ]
+  },
+  {
+    id: 'mahakaleshwar',
+    name: 'Mahakaleshwar Jyotirlinga, Ujjain',
+    category: 'Temple',
+    landmarkName: 'Mahakal Lok Corridor Entry Gate',
+    lat: 23.1827,
+    lng: 75.7682,
+    geofenceRadius: 120,
+    notes: 'Meet in the Mahakal Lok corridor near the large Shiva sculpture fountain.',
+    dressCode: 'Dhoti and Solah for men for Bhasma Aarti; Saree for women.',
+    openingHours: '4:00 AM – 11:00 PM (Bhasma Aarti at 4:00 AM)',
+    checklist: [
+      { id: 1, text: 'Bhasma Aarti online booking pass', checked: true, owner: 'Both' }
+    ]
+  },
+  {
+    id: 'siddhivinayak',
+    name: 'Siddhivinayak Temple, Prabhadevi, Mumbai',
+    category: 'Temple',
+    landmarkName: 'Main Gate 2 (Near Flower Stalls)',
+    lat: 19.0169,
+    lng: 72.8304,
+    geofenceRadius: 90,
+    notes: 'Meet near Gate 2 by the Modak & Marigold garland counter.',
+    dressCode: 'Decent casual or Indian attire.',
+    openingHours: '5:30 AM – 10:00 PM (Tuesdays special rush)',
+    checklist: [
+      { id: 1, text: 'Buy Modak prasad box', checked: false, owner: 'Both' }
+    ]
+  },
+  {
+    id: 'vaishno_devi',
+    name: 'Vaishno Devi Bhawan, Katra, Jammu',
+    category: 'Temple',
+    landmarkName: 'Bhawan Main Gate (Near Bathing Ghat)',
+    lat: 33.0308,
+    lng: 74.9490,
+    geofenceRadius: 120,
+    notes: 'Meet at Bhawan entrance right outside Locker Complex 2.',
+    dressCode: 'Comfortable trekking/warm clothes.',
+    openingHours: 'Open 24 Hours (Aarti at sunrise & sunset)',
+    checklist: [
+      { id: 1, text: 'Yatra Parchi / RFID card token', checked: true, owner: 'Both' }
+    ]
+  },
+  {
+    id: 'brihadeeswarar',
+    name: 'Brihadeeswarar Temple, Thanjavur',
+    category: 'Monument & Temple',
+    landmarkName: 'Keralantakan Gopuram Gate',
+    lat: 10.7828,
+    lng: 79.1318,
+    geofenceRadius: 110,
+    notes: 'Meet in the wide outer courtyard lawn before the inner sanctum tower.',
+    dressCode: 'Modest clothing. UNESCO World Heritage Site.',
+    openingHours: '6:00 AM – 12:30 PM, 4:00 PM – 8:30 PM',
+    checklist: []
+  },
+  {
+    id: 'lotus_temple',
+    name: 'Lotus Temple, Delhi',
+    category: 'Monument',
+    landmarkName: 'Information Center Courtyard',
+    lat: 28.5535,
+    lng: 77.2588,
+    geofenceRadius: 100,
+    notes: 'Meet by the entrance reflecting pools near the visitor garden path.',
+    dressCode: 'Maintain absolute silence inside. Casual dress permitted.',
+    openingHours: '8:30 AM – 5:00 PM (Closed on Mondays)',
+    checklist: []
   }
 ];

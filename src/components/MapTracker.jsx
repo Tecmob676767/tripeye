@@ -4,10 +4,11 @@ import { formatDistance } from '../utils/geo';
 
 export default function MapTracker({
   destination,
+  itinerary,
   currentUser,
-  userPos, // [lat, lng]
+  userPos,
   friendUser,
-  friendPos, // [lat, lng]
+  friendPos,
   userDist,
   friendDist,
   friendsApartDist,
@@ -21,12 +22,13 @@ export default function MapTracker({
   const userMarkerRef = useRef(null);
   const friendMarkerRef = useRef(null);
   const templeMarkerRef = useRef(null);
+  const extraMarkersRef = useRef([]);
   const geofenceCircleRef = useRef(null);
   const userPolylineRef = useRef(null);
   const friendPolylineRef = useRef(null);
   const betweenPolylineRef = useRef(null);
 
-  // Initialize Map
+  // Initialize Leaflet Map
   useEffect(() => {
     if (!mapContainerRef.current) return;
 
@@ -48,7 +50,6 @@ export default function MapTracker({
 
       L.control.zoom({ position: 'topright' }).addTo(map);
 
-      // Allow clicking on map to manually reposition if GPS is not available
       map.on('click', (e) => {
         if (onMapClickToSetPos) {
           onMapClickToSetPos([e.latlng.lat, e.latlng.lng]);
@@ -59,7 +60,7 @@ export default function MapTracker({
     }
   }, []);
 
-  // Update Destination & Geofence
+  // Update Main Destination & Geofence
   useEffect(() => {
     const map = mapInstanceRef.current;
     if (!map || !destination) return;
@@ -85,7 +86,7 @@ export default function MapTracker({
             <span class="text-xl">🛕</span>
           </div>
           <div class="mt-1 bg-slate-900/90 text-amber-300 text-[11px] font-bold px-2 py-0.5 rounded-full border border-amber-500/30 whitespace-nowrap shadow-md">
-            ${destination.landmarkName}
+            ${destination.landmarkName || destination.name}
           </div>
         </div>
       `,
@@ -98,12 +99,54 @@ export default function MapTracker({
       .bindPopup(`
         <div class="p-1 text-xs">
           <b class="text-amber-400 text-sm block">${destination.name}</b>
-          <p class="text-slate-300 mt-1">${destination.notes}</p>
+          <p class="text-slate-300 mt-1">${destination.landmarkName}</p>
+          <p class="text-slate-400 mt-1 text-[11px]">${destination.notes || ''}</p>
         </div>
       `);
   }, [destination]);
 
-  // Current User Marker (You)
+  // Render Extra Itinerary Stops on Map
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map) return;
+
+    extraMarkersRef.current.forEach(m => m.remove());
+    extraMarkersRef.current = [];
+
+    if (!itinerary || itinerary.length <= 1) return;
+
+    itinerary.forEach((place, index) => {
+      if (place.id === destination?.id) return; // Already primary
+
+      const stopIcon = L.divIcon({
+        className: 'custom-stop-icon',
+        html: `
+          <div class="flex flex-col items-center pointer-events-auto cursor-pointer">
+            <div class="w-7 h-7 rounded-full bg-slate-900 border-2 border-amber-400 text-amber-300 font-extrabold text-xs flex items-center justify-center shadow-lg">
+              ${index + 1}
+            </div>
+            <div class="mt-0.5 bg-slate-900/90 text-slate-200 text-[10px] font-semibold px-1.5 py-0.5 rounded border border-slate-700 whitespace-nowrap shadow">
+              ${place.name.split(',')[0]}
+            </div>
+          </div>
+        `,
+        iconSize: [30, 30],
+        iconAnchor: [15, 15]
+      });
+
+      const marker = L.marker([place.lat, place.lng], { icon: stopIcon })
+        .addTo(map)
+        .bindPopup(`
+          <div class="p-1 text-xs">
+            <b class="text-amber-400 block">Stop ${index + 1}: ${place.name}</b>
+            <p class="text-slate-300 mt-1">${place.landmarkName || ''}</p>
+          </div>
+        `);
+      extraMarkersRef.current.push(marker);
+    });
+  }, [itinerary, destination]);
+
+  // User Marker
   useEffect(() => {
     const map = mapInstanceRef.current;
     if (!map || !userPos) return;

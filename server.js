@@ -14,46 +14,52 @@ const io = new Server(server, {
   }
 });
 
-// Store active trips: { [tripCode]: { destination, users: { [socketId]: { id, name, phone, dob, lat, lng } } } }
 const trips = {};
 
 io.on('connection', (socket) => {
-  console.log('User connected:', socket.id);
-
-  // Join trip room
-  socket.on('join-trip', ({ tripCode, user, destination }) => {
+  socket.on('join-trip', ({ tripCode, user, destination, itinerary }) => {
     socket.join(tripCode);
     if (!trips[tripCode]) {
       trips[tripCode] = {
         tripCode,
         destination: destination || null,
+        itinerary: itinerary || [],
         users: {}
       };
     }
 
-    // Save user info
     trips[tripCode].users[socket.id] = {
       socketId: socket.id,
       ...user
     };
 
-    console.log(`User ${user.name} (${user.phone}) joined trip ${tripCode}`);
-
-    // Notify room members
     io.to(tripCode).emit('trip-state', {
       tripCode,
       destination: trips[tripCode].destination,
+      itinerary: trips[tripCode].itinerary,
       users: Object.values(trips[tripCode].users)
     });
   });
 
-  // Real-time location broadcast
+  socket.on('update-destination', ({ tripCode, destination }) => {
+    if (trips[tripCode]) {
+      trips[tripCode].destination = destination;
+      socket.to(tripCode).emit('destination-updated', destination);
+    }
+  });
+
+  socket.on('update-itinerary', ({ tripCode, itinerary }) => {
+    if (trips[tripCode]) {
+      trips[tripCode].itinerary = itinerary;
+      socket.to(tripCode).emit('itinerary-updated', itinerary);
+    }
+  });
+
   socket.on('update-location', ({ tripCode, coords }) => {
     if (trips[tripCode] && trips[tripCode].users[socket.id]) {
       trips[tripCode].users[socket.id].lat = coords.lat;
       trips[tripCode].users[socket.id].lng = coords.lng;
       trips[tripCode].users[socket.id].accuracy = coords.accuracy;
-      trips[tripCode].users[socket.id].lastSeen = Date.now();
 
       socket.to(tripCode).emit('peer-location', {
         socketId: socket.id,
@@ -63,12 +69,10 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Chat message
   socket.on('send-message', ({ tripCode, message }) => {
     io.to(tripCode).emit('receive-message', message);
   });
 
-  // WebRTC Audio Call signaling
   socket.on('call-user', ({ tripCode, toSocketId, callerInfo, signalData }) => {
     io.to(toSocketId).emit('incoming-call', {
       fromSocketId: socket.id,
@@ -84,13 +88,6 @@ io.on('connection', (socket) => {
     });
   });
 
-  socket.on('ice-candidate', ({ toSocketId, candidate }) => {
-    io.to(toSocketId).emit('ice-candidate', {
-      fromSocketId: socket.id,
-      candidate
-    });
-  });
-
   socket.on('end-call', ({ toSocketId, tripCode }) => {
     if (toSocketId) {
       io.to(toSocketId).emit('call-ended', { fromSocketId: socket.id });
@@ -99,17 +96,14 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Disconnect
   socket.on('disconnect', () => {
-    console.log('User disconnected:', socket.id);
     for (const tripCode in trips) {
       if (trips[tripCode].users[socket.id]) {
-        const userName = trips[tripCode].users[socket.id].name;
         delete trips[tripCode].users[socket.id];
-        io.to(tripCode).emit('user-left', { socketId: socket.id, userName });
         io.to(tripCode).emit('trip-state', {
           tripCode,
           destination: trips[tripCode].destination,
+          itinerary: trips[tripCode].itinerary,
           users: Object.values(trips[tripCode].users)
         });
       }
@@ -119,5 +113,5 @@ io.on('connection', (socket) => {
 
 const PORT = 3001;
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Tripeye Real-Time Signaling Server running on port ${PORT}`);
+  console.log(`Tripeye Signaling Server running on port ${PORT}`);
 });

@@ -9,56 +9,71 @@ import ChatDrawer from './components/ChatDrawer';
 import TripDetailsModal from './components/TripDetailsModal';
 import AuthModal from './components/AuthModal';
 import TripRoomModal from './components/TripRoomModal';
+import PlaceSearchModal from './components/PlaceSearchModal';
+import ShareModal from './components/ShareModal';
 import CallModal from './components/CallModal';
 import { PRESET_DESTINATIONS, getDistanceMeters } from './utils/geo';
 import { playArrivalSound, playMessageSound } from './utils/audio';
 
 export default function App() {
-  // Authentication state
+  // Authentication
   const [currentUser, setCurrentUser] = useState(() => {
     const saved = localStorage.getItem('tripeye_user');
     return saved ? JSON.parse(saved) : null;
   });
   const [isAuthOpen, setIsAuthOpen] = useState(!currentUser);
 
-  // Active Trip Room & Destination
+  // Active Trip Room & Destination from URL params
   const [activeTripCode, setActiveTripCode] = useState(() => {
     const params = new URLSearchParams(window.location.search);
     return params.get('trip') || 'TEMPLE-101';
   });
-  const [destination, setDestination] = useState(PRESET_DESTINATIONS[0]);
-  const [isTripRoomOpen, setIsTripRoomOpen] = useState(false);
 
-  // Connected Peers in the room
+  const [destination, setDestination] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    const destId = params.get('dest');
+    if (destId) {
+      const found = PRESET_DESTINATIONS.find(d => d.id === destId);
+      if (found) return found;
+    }
+    return PRESET_DESTINATIONS[0];
+  });
+
+  // Multiple Places to Visit (Itinerary)
+  const [itinerary, setItinerary] = useState(() => [PRESET_DESTINATIONS[0]]);
+
+  // Modals & Panels
+  const [isTripRoomOpen, setIsTripRoomOpen] = useState(false);
+  const [isPlacesSearchOpen, setIsPlacesSearchOpen] = useState(false);
+  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+  const [isChatOpen, setIsChatOpen] = useState(false);
+  const [isDetailsOpen, setIsDetailsOpen] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [messages, setMessages] = useState([]);
+
+  // Connected Peers
   const [friendUser, setFriendUser] = useState(null);
 
   // Real GPS Positions [lat, lng]
   const [userPos, setUserPos] = useState(null);
   const [friendPos, setFriendPos] = useState(null);
 
-  // UI state
-  const [isChatOpen, setIsChatOpen] = useState(false);
-  const [isDetailsOpen, setIsDetailsOpen] = useState(false);
-  const [unreadCount, setUnreadCount] = useState(0);
-  const [messages, setMessages] = useState([]);
-
   // Calling state
   const [isCallOpen, setIsCallOpen] = useState(false);
   const [isIncomingCall, setIsIncomingCall] = useState(false);
-  const [callStatus, setCallStatus] = useState('calling'); // 'calling', 'ringing', 'connected', 'ended'
+  const [callStatus, setCallStatus] = useState('calling');
   const localStreamRef = useRef(null);
-  const peerConnectionRef = useRef(null);
 
-  // Geofence & arrival state
+  // Geofence / Arrival
   const [isUserArrived, setIsUserArrived] = useState(false);
   const [isFriendArrived, setIsFriendArrived] = useState(false);
   const [areMet, setAreMet] = useState(false);
   const hasTriggeredArrivalRef = useRef(false);
 
-  // Socket reference
+  // Socket
   const socketRef = useRef(null);
 
-  // Connect to Socket.io signaling server
+  // Connect Socket.io
   useEffect(() => {
     const socketServerUrl = window.location.hostname === 'localhost' 
       ? 'http://localhost:3001' 
@@ -70,18 +85,21 @@ export default function App() {
     socketRef.current = socket;
 
     socket.on('connect', () => {
-      console.log('Connected to Tripeye real-time server:', socket.id);
+      console.log('Connected to server:', socket.id);
       if (currentUser && activeTripCode) {
         socket.emit('join-trip', {
           tripCode: activeTripCode,
           user: currentUser,
-          destination
+          destination,
+          itinerary
         });
       }
     });
 
-    // Room state update
-    socket.on('trip-state', ({ users }) => {
+    socket.on('trip-state', ({ users, destination: remoteDest, itinerary: remoteItin }) => {
+      if (remoteDest) setDestination(remoteDest);
+      if (remoteItin) setItinerary(remoteItin);
+
       const otherUser = users.find(u => u.id !== currentUser?.id);
       if (otherUser) {
         setFriendUser(otherUser);
@@ -93,13 +111,20 @@ export default function App() {
       }
     });
 
-    // Peer location update
     socket.on('peer-location', ({ user, coords }) => {
       setFriendUser(prev => ({ ...prev, ...user }));
       setFriendPos([coords.lat, coords.lng]);
     });
 
-    // Chat message received
+    socket.on('destination-updated', (newDest) => {
+      setDestination(newDest);
+      hasTriggeredArrivalRef.current = false;
+    });
+
+    socket.on('itinerary-updated', (newItin) => {
+      setItinerary(newItin);
+    });
+
     socket.on('receive-message', (msg) => {
       setMessages(prev => [...prev, msg]);
       playMessageSound();
@@ -108,16 +133,13 @@ export default function App() {
       }
     });
 
-    // Incoming Call signaling
-    socket.on('incoming-call', ({ fromSocketId, callerInfo }) => {
+    socket.on('incoming-call', () => {
       setIsIncomingCall(true);
       setCallStatus('ringing');
       setIsCallOpen(true);
     });
 
-    socket.on('call-accepted', () => {
-      setCallStatus('connected');
-    });
+    socket.on('call-accepted', () => setCallStatus('connected'));
 
     socket.on('call-ended', () => {
       setIsCallOpen(false);
@@ -127,17 +149,12 @@ export default function App() {
       }
     });
 
-    return () => {
-      socket.disconnect();
-    };
+    return () => socket.disconnect();
   }, [currentUser, activeTripCode]);
 
-  // Real GPS tracking using navigator.geolocation
+  // Real GPS watcher
   useEffect(() => {
-    if (!navigator.geolocation) {
-      console.warn('Geolocation not supported');
-      return;
-    }
+    if (!navigator.geolocation) return;
 
     const watchId = navigator.geolocation.watchPosition(
       (pos) => {
@@ -148,7 +165,6 @@ export default function App() {
         };
         setUserPos([coords.lat, coords.lng]);
 
-        // Broadcast to trip room
         if (socketRef.current && activeTripCode) {
           socketRef.current.emit('update-location', {
             tripCode: activeTripCode,
@@ -157,9 +173,8 @@ export default function App() {
         }
       },
       (err) => {
-        console.warn('Geolocation error:', err.message);
-        // Fallback default starting point near destination if permission denied on desktop
-        if (!userPos) {
+        console.warn('Geolocation warning:', err.message);
+        if (!userPos && destination) {
           setUserPos([destination.lat + 0.005, destination.lng + 0.005]);
         }
       },
@@ -169,14 +184,15 @@ export default function App() {
     return () => navigator.geolocation.clearWatch(watchId);
   }, [activeTripCode, destination]);
 
-  // Distances calculations
-  const destCoords = [destination.lat, destination.lng];
+  // Distances
+  const destCoords = destination ? [destination.lat, destination.lng] : [0, 0];
   const userDist = userPos ? getDistanceMeters(userPos[0], userPos[1], destCoords[0], destCoords[1]) : 0;
   const friendDist = friendPos ? getDistanceMeters(friendPos[0], friendPos[1], destCoords[0], destCoords[1]) : 0;
   const friendsApartDist = (userPos && friendPos) ? getDistanceMeters(userPos[0], userPos[1], friendPos[0], friendPos[1]) : 0;
 
-  // Geofence detection for real coordinates
+  // Arrival detection
   useEffect(() => {
+    if (!destination) return;
     const userIn = userDist > 0 && userDist <= destination.geofenceRadius;
     const friendIn = friendDist > 0 && friendDist <= destination.geofenceRadius;
     const together = friendsApartDist > 0 && friendsApartDist <= 25;
@@ -192,7 +208,39 @@ export default function App() {
     }
   }, [userDist, friendDist, friendsApartDist, destination]);
 
-  // Sending real chat message
+  // Destination Change Handler
+  const handleSelectDestination = (dest) => {
+    setDestination(dest);
+    hasTriggeredArrivalRef.current = false;
+    
+    // Add to itinerary if not present
+    setItinerary(prev => {
+      const exists = prev.some(p => p.id === dest.id);
+      const updated = exists ? prev : [...prev, dest];
+      if (socketRef.current) {
+        socketRef.current.emit('update-itinerary', { tripCode: activeTripCode, itinerary: updated });
+      }
+      return updated;
+    });
+
+    if (socketRef.current) {
+      socketRef.current.emit('update-destination', { tripCode: activeTripCode, destination: dest });
+    }
+  };
+
+  const handleAddToItinerary = (place) => {
+    setItinerary(prev => {
+      const exists = prev.some(p => p.id === place.id);
+      if (exists) return prev;
+      const updated = [...prev, place];
+      if (socketRef.current) {
+        socketRef.current.emit('update-itinerary', { tripCode: activeTripCode, itinerary: updated });
+      }
+      return updated;
+    });
+  };
+
+  // Chat
   const handleSendMessage = (text) => {
     if (!currentUser || !activeTripCode) return;
     const newMsg = {
@@ -202,7 +250,6 @@ export default function App() {
       text,
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     };
-
     if (socketRef.current) {
       socketRef.current.emit('send-message', {
         tripCode: activeTripCode,
@@ -229,7 +276,7 @@ export default function App() {
         });
       }
     } catch (e) {
-      console.warn('Microphone permission not granted:', e);
+      console.warn('Microphone error:', e);
     }
   };
 
@@ -262,17 +309,6 @@ export default function App() {
     }
   };
 
-  // Fallback: Click on map to set position (helpful when testing on a desktop PC without GPS)
-  const handleMapClickToSetPos = (coords) => {
-    setUserPos(coords);
-    if (socketRef.current && activeTripCode) {
-      socketRef.current.emit('update-location', {
-        tripCode: activeTripCode,
-        coords: { lat: coords[0], lng: coords[1] }
-      });
-    }
-  };
-
   return (
     <div className="w-screen h-screen flex flex-col bg-slate-950 text-slate-100 overflow-hidden select-none">
       {/* Top Navbar */}
@@ -281,6 +317,9 @@ export default function App() {
         friendUser={friendUser}
         activeTripCode={activeTripCode}
         destination={destination}
+        itineraryCount={itinerary.length}
+        onOpenPlacesSearch={() => setIsPlacesSearchOpen(true)}
+        onOpenShareModal={() => setIsShareModalOpen(true)}
         onOpenTripRoom={() => setIsTripRoomOpen(true)}
         onOpenDetails={() => setIsDetailsOpen(true)}
         onToggleChat={() => {
@@ -296,7 +335,7 @@ export default function App() {
         }}
       />
 
-      {/* Main Map Container */}
+      {/* Main Map */}
       <main className="relative flex-1 w-full h-full overflow-hidden">
         {/* Floating Proximity HUD */}
         <TripHUD
@@ -311,7 +350,7 @@ export default function App() {
           onCallFriend={handleStartCall}
         />
 
-        {/* Dynamic Arrival Banner */}
+        {/* Arrival Banner */}
         <ArrivalAlertBanner
           isPriyaArrived={isFriendArrived || isUserArrived}
           destination={destination}
@@ -321,9 +360,10 @@ export default function App() {
           }}
         />
 
-        {/* Interactive Leaflet Map */}
+        {/* Map Tracker */}
         <MapTracker
           destination={destination}
+          itinerary={itinerary}
           currentUser={currentUser}
           userPos={userPos}
           friendUser={friendUser}
@@ -334,17 +374,32 @@ export default function App() {
           isUserArrived={isUserArrived}
           isFriendArrived={isFriendArrived}
           areMet={areMet}
-          onMapClickToSetPos={handleMapClickToSetPos}
+          onMapClickToSetPos={(coords) => {
+            setUserPos(coords);
+            if (socketRef.current && activeTripCode) {
+              socketRef.current.emit('update-location', {
+                tripCode: activeTripCode,
+                coords: { lat: coords[0], lng: coords[1] }
+              });
+            }
+          }}
         />
 
-        {/* Desktop Helper Pill */}
-        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 px-3 py-1 rounded-full bg-slate-900/80 backdrop-blur-md border border-slate-800 text-[10px] text-slate-400 pointer-events-none flex items-center gap-1.5 shadow-lg">
-          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-          <span>Live GPS Active • Click anywhere on map to reposition manually</span>
+        {/* Bottom Helper Bar */}
+        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 px-3.5 py-1.5 rounded-full bg-slate-900/90 backdrop-blur-md border border-slate-800 text-[11px] text-slate-300 flex items-center gap-2 shadow-xl">
+          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+          <span>Live GPS</span>
+          <span className="text-slate-500">•</span>
+          <button
+            onClick={() => setIsPlacesSearchOpen(true)}
+            className="text-amber-400 hover:underline font-bold"
+          >
+            Explore all {itinerary.length} places to visit
+          </button>
         </div>
       </main>
 
-      {/* Real-Time In-Trip Chat */}
+      {/* Real-time In-Trip Chat */}
       <ChatDrawer
         isOpen={isChatOpen}
         onClose={() => setIsChatOpen(false)}
@@ -355,14 +410,32 @@ export default function App() {
         onCallFriend={handleStartCall}
       />
 
-      {/* Temple Rendezvous Guide */}
+      {/* Destination Details Guide */}
       <TripDetailsModal
         isOpen={isDetailsOpen}
         onClose={() => setIsDetailsOpen(false)}
         destination={destination}
       />
 
-      {/* Real Login Modal (Strict: Name, DOB, Phone number) */}
+      {/* All Places to Visit Search & Catalog Modal */}
+      <PlaceSearchModal
+        isOpen={isPlacesSearchOpen}
+        onClose={() => setIsPlacesSearchOpen(false)}
+        currentDestination={destination}
+        onSelectDestination={handleSelectDestination}
+        onAddToItinerary={handleAddToItinerary}
+        itinerary={itinerary}
+      />
+
+      {/* Real Share Modal (WhatsApp, QR Code, Wi-Fi IP) */}
+      <ShareModal
+        isOpen={isShareModalOpen}
+        onClose={() => setIsShareModalOpen(false)}
+        activeTripCode={activeTripCode}
+        destination={destination}
+      />
+
+      {/* Real Login Modal */}
       <AuthModal
         isOpen={isAuthOpen}
         onLogin={(userData) => {
@@ -371,14 +444,14 @@ export default function App() {
         }}
       />
 
-      {/* Trip Room Modal (Invite, Join, Create) */}
+      {/* Trip Room Modal */}
       <TripRoomModal
         isOpen={isTripRoomOpen}
         onClose={() => setIsTripRoomOpen(false)}
         activeTripCode={activeTripCode}
         onCreateTrip={(code, dest) => {
           setActiveTripCode(code);
-          setDestination(dest);
+          handleSelectDestination(dest);
           const newUrl = `${window.location.pathname}?trip=${code}`;
           window.history.pushState({}, '', newUrl);
         }}
