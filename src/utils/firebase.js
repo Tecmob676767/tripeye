@@ -1,5 +1,6 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getDatabase, ref, set, onValue, get } from 'firebase/database';
+import { getAuth, RecaptchaVerifier, signInWithPhoneNumber } from 'firebase/auth';
 
 const DEFAULT_FIREBASE_CONFIG = {
   apiKey: "AIzaSyTripeyeSyncDefaultKey2026_LiveKey",
@@ -103,4 +104,58 @@ export function subscribeToFirebaseTrip(tripCode, onUpdate) {
   } catch (err) {
     return () => {};
   }
+}
+let firebaseAuth = null;
+
+export function getFirebaseAuth() {
+  const { app } = initFirebase();
+  if (!app) return null;
+  if (!firebaseAuth) {
+    firebaseAuth = getAuth(app);
+  }
+  return firebaseAuth;
+}
+
+export function setupRecaptcha(containerId = 'recaptcha-container') {
+  const auth = getFirebaseAuth();
+  if (!auth) return null;
+  try {
+    if (window.recaptchaVerifier) {
+      try { window.recaptchaVerifier.clear(); } catch (e) {}
+    }
+    window.recaptchaVerifier = new RecaptchaVerifier(auth, containerId, {
+      size: 'invisible',
+      callback: () => {
+        console.log('✅ Google reCAPTCHA solved for phone auth');
+      }
+    });
+    return window.recaptchaVerifier;
+  } catch (err) {
+    console.warn('reCAPTCHA init notice:', err.message);
+    return null;
+  }
+}
+
+export async function sendFirebasePhoneOtp(phoneNumber, containerId = 'recaptcha-container') {
+  const auth = getFirebaseAuth();
+  if (!auth) throw new Error('Firebase Auth not available');
+
+  let cleanNumber = phoneNumber.replace(/[^0-9+]/g, '');
+  if (!cleanNumber.startsWith('+')) {
+    cleanNumber = '+91' + cleanNumber;
+  }
+
+  const verifier = setupRecaptcha(containerId);
+  const confirmationResult = await signInWithPhoneNumber(auth, cleanNumber, verifier);
+  window.confirmationResult = confirmationResult;
+  console.log('📲 Real SMS sent by Google Firebase to:', cleanNumber);
+  return confirmationResult;
+}
+
+export async function verifyFirebasePhoneOtp(otpCode) {
+  if (!window.confirmationResult) {
+    throw new Error('No active SMS confirmation found');
+  }
+  const result = await window.confirmationResult.confirm(otpCode);
+  return result.user;
 }
