@@ -8,7 +8,8 @@ import NavigationBanner from './components/NavigationBanner';
 import ArrivalAlertBanner from './components/ArrivalAlertBanner';
 import RendezvousRadar from './components/RendezvousRadar';
 import SosModal from './components/SosModal';
-import GoogleSyncModal from './components/GoogleSyncModal';
+import FirebaseSyncModal from './components/FirebaseSyncModal';
+import { syncTripToFirebase, subscribeToFirebaseTrip } from './utils/firebase';
 import TripChecklistModal from './components/TripChecklistModal';
 import SavedTripsModal from './components/SavedTripsModal';
 import ChatDrawer from './components/ChatDrawer';
@@ -98,7 +99,7 @@ export default function App() {
   const [isTripRoomOpen, setIsTripRoomOpen] = useState(false);
   const [isPlacesSearchOpen, setIsPlacesSearchOpen] = useState(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
-  const [isGoogleSyncOpen, setIsGoogleSyncOpen] = useState(false);
+  const [isFirebaseSyncOpen, setIsFirebaseSyncOpen] = useState(false);
   const [isChecklistOpen, setIsChecklistOpen] = useState(false);
   const [isSavedTripsOpen, setIsSavedTripsOpen] = useState(false);
   const [isSosOpen, setIsSosOpen] = useState(false);
@@ -503,7 +504,7 @@ export default function App() {
         onOpenPlacesSearch={() => setIsPlacesSearchOpen(true)}
         onOpenShareModal={() => setIsShareModalOpen(true)}
         onOpenTripRoom={() => setIsTripRoomOpen(true)}
-        onOpenGoogleSync={() => setIsGoogleSyncOpen(true)}
+        onOpenFirebaseSync={() => setIsFirebaseSyncOpen(true)}
         onOpenChecklist={() => setIsChecklistOpen(true)}
         onOpenSavedTrips={() => setIsSavedTripsOpen(true)}
         onOpenSos={() => setIsSosOpen(true)}
@@ -627,14 +628,15 @@ export default function App() {
         destination={destination}
       />
 
-      <GoogleSyncModal
-        isOpen={isGoogleSyncOpen}
-        onClose={() => setIsGoogleSyncOpen(false)}
+      <FirebaseSyncModal
+        isOpen={isFirebaseSyncOpen}
+        onClose={() => setIsFirebaseSyncOpen(false)}
         currentUser={currentUser}
         activeTripCode={activeTripCode}
         destination={destination}
         itinerary={itinerary}
-        onTriggerSync={handleGoogleSync}
+        checklist={checklist}
+        messages={messages}
       />
 
       <TripChecklistModal

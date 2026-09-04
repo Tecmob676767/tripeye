@@ -1,5 +1,5 @@
 import React from 'react';
-import { Eye, MapPin, Share2, MessageSquare, Phone, Compass, AlertTriangle, Cloud, ListChecks, History } from 'lucide-react';
+import { Eye, MapPin, Share2, MessageSquare, Phone, Compass, AlertTriangle, Flame, ListChecks, History } from 'lucide-react';
 
 export default function Navbar({
   currentUser,
@@ -10,7 +10,7 @@ export default function Navbar({
   onOpenPlacesSearch,
   onOpenShareModal,
   onOpenTripRoom,
-  onOpenGoogleSync,
+  onOpenFirebaseSync,
   onOpenChecklist,
   onOpenSavedTrips,
   onOpenSos,
@@ -55,13 +55,13 @@ export default function Navbar({
       </div>
 
       <div className="flex items-center gap-1.5 sm:gap-2">
-        {/* Google Sync Status button */}
+        {/* Firebase Sync Status button */}
         <button
           onClick={onOpenGoogleSync}
-          className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-sky-500/10 hover:bg-sky-500/20 text-sky-300 border border-sky-500/30 text-xs font-bold transition active:scale-95"
-          title="Google & Cloud Sync (Persists all data)"
+          className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-orange-500/15 hover:bg-orange-500/25 text-orange-300 border border-orange-500/35 text-xs font-bold transition active:scale-95"
+          title="Google Firebase Realtime Sync"
         >
-          <Cloud className="w-3.5 h-3.5 text-sky-400" />
+          <Flame className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
           <span className="hidden sm:inline">Google Sync</span>
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
         </button>
