@@ -55,7 +55,56 @@ export const playMessageSound = () => {
   }
 };
 
-// Start telephone ringtone
+export const playTurnChime = () => {
+  try {
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) return;
+    const ctx = new AudioContext();
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(659.25, ctx.currentTime);
+    osc.frequency.setValueAtTime(987.77, ctx.currentTime + 0.09);
+
+    gain.gain.setValueAtTime(0.15, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.36);
+  } catch (e) {}
+};
+
+export const playSosSiren = () => {
+  try {
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) return;
+    const ctx = new AudioContext();
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(700, ctx.currentTime);
+    osc.frequency.linearRampToValueAtTime(1200, ctx.currentTime + 0.3);
+    osc.frequency.linearRampToValueAtTime(700, ctx.currentTime + 0.6);
+    osc.frequency.linearRampToValueAtTime(1200, ctx.currentTime + 0.9);
+
+    gain.gain.setValueAtTime(0.25, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 1.2);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 1.25);
+  } catch (e) {}
+};
+
 export const startRingtone = () => {
   stopRingtone();
   const playBeep = () => {
@@ -68,8 +117,8 @@ export const startRingtone = () => {
       const osc2 = ctx.createOscillator();
       const gain = ctx.createGain();
 
-      osc1.frequency.setValueAtTime(440, ctx.currentTime); // 440 Hz
-      osc2.frequency.setValueAtTime(480, ctx.currentTime); // 480 Hz
+      osc1.frequency.setValueAtTime(440, ctx.currentTime);
+      osc2.frequency.setValueAtTime(480, ctx.currentTime);
 
       gain.gain.setValueAtTime(0.1, ctx.currentTime);
       gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1.2);
@@ -82,9 +131,7 @@ export const startRingtone = () => {
       osc2.start(ctx.currentTime);
       osc1.stop(ctx.currentTime + 1.25);
       osc2.stop(ctx.currentTime + 1.25);
-    } catch (e) {
-      console.warn(e);
-    }
+    } catch (e) {}
   };
 
   playBeep();

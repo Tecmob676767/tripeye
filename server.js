@@ -2,19 +2,27 @@ import express from 'express';
 import http from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 app.use(cors());
 
-// Turn-by-Turn routing proxy
+// Turn-by-turn routing with transport profiles: driving, walking, cycling
 app.get('/api/route', async (req, res) => {
-  const { fromLat, fromLng, toLat, toLng } = req.query;
+  const { fromLat, fromLng, toLat, toLng, profile = 'driving' } = req.query;
   if (!fromLat || !fromLng || !toLat || !toLng) {
     return res.status(400).json({ error: 'Missing coordinates' });
   }
 
+  const osrmProfile = profile === 'walking' ? 'foot' : profile === 'cycling' ? 'bike' : 'driving';
+
   try {
-    const url = `https://router.project-osrm.org/route/v1/driving/${fromLng},${fromLat};${toLng},${toLat}?overview=full&geometries=geojson&steps=true`;
+    const url = "https://router.project-osrm.org/route/v1/" + osrmProfile + "/" + fromLng + "," + fromLat + ";" + toLng + "," + toLat + "?overview=full&geometries=geojson&steps=true";
     const response = await fetch(url, {
       headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) TripeyeNavigation' }
     });
@@ -26,12 +34,24 @@ app.get('/api/route', async (req, res) => {
   }
 });
 
+app.get('/api/tunnel-url', (req, res) => {
+  try {
+    if (fs.existsSync('public-tunnel.json')) {
+      const data = JSON.parse(fs.readFileSync('public-tunnel.json', 'utf8'));
+      return res.json(data);
+    }
+  } catch (e) {}
+  res.json({ httpsUrl: null });
+});
+
+const distPath = path.join(__dirname, 'dist');
+if (fs.existsSync(distPath)) {
+  app.use(express.static(distPath));
+}
+
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: {
-    origin: '*',
-    methods: ['GET', 'POST']
-  }
+  cors: { origin: '*', methods: ['GET', 'POST'] }
 });
 
 const trips = {};
@@ -75,22 +95,35 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('update-location', ({ tripCode, coords }) => {
+  socket.on('update-location', ({ tripCode, coords, speed, heading }) => {
     if (trips[tripCode] && trips[tripCode].users[socket.id]) {
       trips[tripCode].users[socket.id].lat = coords.lat;
       trips[tripCode].users[socket.id].lng = coords.lng;
       trips[tripCode].users[socket.id].accuracy = coords.accuracy;
+      trips[tripCode].users[socket.id].speed = speed;
+      trips[tripCode].users[socket.id].heading = heading;
 
       socket.to(tripCode).emit('peer-location', {
         socketId: socket.id,
         user: trips[tripCode].users[socket.id],
-        coords
+        coords,
+        speed,
+        heading
       });
     }
   });
 
   socket.on('send-message', ({ tripCode, message }) => {
     io.to(tripCode).emit('receive-message', message);
+  });
+
+  socket.on('sos-alert', ({ tripCode, user, coords, address }) => {
+    io.to(tripCode).emit('sos-received', {
+      user,
+      coords,
+      address,
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    });
   });
 
   socket.on('call-user', ({ tripCode, toSocketId, callerInfo, signalData }) => {
@@ -131,7 +164,13 @@ io.on('connection', (socket) => {
   });
 });
 
+if (fs.existsSync(distPath)) {
+  app.get('*', (req, res) => {
+    res.sendFile(path.join(distPath, 'index.html'));
+  });
+}
+
 const PORT = 3001;
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Tripeye Server with Navigation Routing running on port ${PORT}`);
+  console.log("Tripeye Server with Navigation Routing running on port " + PORT);
 });

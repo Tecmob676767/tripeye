@@ -6,6 +6,8 @@ import MapTracker from './components/MapTracker';
 import TripHUD from './components/TripHUD';
 import NavigationBanner from './components/NavigationBanner';
 import ArrivalAlertBanner from './components/ArrivalAlertBanner';
+import RendezvousRadar from './components/RendezvousRadar';
+import SosModal from './components/SosModal';
 import ChatDrawer from './components/ChatDrawer';
 import TripDetailsModal from './components/TripDetailsModal';
 import AuthModal from './components/AuthModal';
@@ -14,17 +16,15 @@ import PlaceSearchModal from './components/PlaceSearchModal';
 import ShareModal from './components/ShareModal';
 import CallModal from './components/CallModal';
 import { PRESET_DESTINATIONS, getDistanceMeters } from './utils/geo';
-import { playArrivalSound, playMessageSound } from './utils/audio';
+import { playArrivalSound, playMessageSound, playSosSiren } from './utils/audio';
 
 export default function App() {
-  // Authentication
   const [currentUser, setCurrentUser] = useState(() => {
     const saved = localStorage.getItem('tripeye_user');
     return saved ? JSON.parse(saved) : null;
   });
   const [isAuthOpen, setIsAuthOpen] = useState(!currentUser);
 
-  // Active Trip Room & Destination from URL
   const [activeTripCode, setActiveTripCode] = useState(() => {
     const params = new URLSearchParams(window.location.search);
     return params.get('trip') || 'TEMPLE-101';
@@ -40,85 +40,68 @@ export default function App() {
     return PRESET_DESTINATIONS[0];
   });
 
-  // Multiple Places to Visit (Itinerary)
   const [itinerary, setItinerary] = useState(() => [PRESET_DESTINATIONS[0]]);
 
-  // Navigation & Route data
+  const [transportMode, setTransportMode] = useState('driving');
   const [routeData, setRouteData] = useState(null);
   const [roadRouteCoordinates, setRoadRouteCoordinates] = useState([]);
+  const [userSpeed, setUserSpeed] = useState(0);
 
-  // Modals & Panels
   const [isTripRoomOpen, setIsTripRoomOpen] = useState(false);
   const [isPlacesSearchOpen, setIsPlacesSearchOpen] = useState(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+  const [isSosOpen, setIsSosOpen] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
-  const [isDetailsOpen, setIsDetailsOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const [messages, setMessages] = useState([]);
 
-  // Connected Peers
   const [friendUser, setFriendUser] = useState(null);
-
-  // Real GPS Positions
   const [userPos, setUserPos] = useState(null);
   const [friendPos, setFriendPos] = useState(null);
 
-  // Calling state
   const [isCallOpen, setIsCallOpen] = useState(false);
   const [isIncomingCall, setIsIncomingCall] = useState(false);
   const [callStatus, setCallStatus] = useState('calling');
   const localStreamRef = useRef(null);
 
-  // Geofence / Arrival
   const [isUserArrived, setIsUserArrived] = useState(false);
   const [isFriendArrived, setIsFriendArrived] = useState(false);
   const [areMet, setAreMet] = useState(false);
   const hasTriggeredArrivalRef = useRef(false);
 
-  // Socket
+  const [remoteSosAlert, setRemoteSosAlert] = useState(null);
   const socketRef = useRef(null);
 
-  // Fetch Real Road Navigation Route
-  const fetchRoadRoute = async (fromCoords, toCoords) => {
+  const fetchRoadRoute = async (fromCoords, toCoords, mode = transportMode) => {
     if (!fromCoords || !toCoords) return;
     try {
-      const serverUrl = window.location.hostname === 'localhost'
-        ? 'http://localhost:3001'
-        : `http://${window.location.hostname}:3001`;
-
-      const res = await fetch(`${serverUrl}/api/route?fromLat=${fromCoords[0]}&fromLng=${fromCoords[1]}&toLat=${toCoords[0]}&toLng=${toCoords[1]}`);
+      const res = await fetch("/api/route?fromLat=" + fromCoords[0] + "&fromLng=" + fromCoords[1] + "&toLat=" + toCoords[0] + "&toLng=" + toCoords[1] + "&profile=" + mode);
       const data = await res.json();
       if (data.routes && data.routes.length > 0) {
         setRouteData(data.routes[0]);
-        // Convert GeoJSON [lng, lat] to Leaflet [lat, lng]
         const latLngs = data.routes[0].geometry.coordinates.map(pt => [pt[1], pt[0]]);
         setRoadRouteCoordinates(latLngs);
       }
     } catch (e) {
-      console.warn('Navigation route error:', e);
+      console.warn('Route fetch error:', e);
     }
   };
 
-  // Recompute route when userPos or destination changes
   useEffect(() => {
     if (userPos && destination) {
-      fetchRoadRoute(userPos, [destination.lat, destination.lng]);
+      fetchRoadRoute(userPos, [destination.lat, destination.lng], transportMode);
     }
-  }, [userPos, destination]);
+  }, [userPos, destination, transportMode]);
 
-  // Connect Socket.io
   useEffect(() => {
-    const socketServerUrl = window.location.hostname === 'localhost' 
-      ? 'http://localhost:3001' 
-      : `http://${window.location.hostname}:3001`;
-
-    const socket = io(socketServerUrl, {
+    const socket = io('/', {
+      path: '/socket.io',
       transports: ['websocket', 'polling']
     });
     socketRef.current = socket;
 
     socket.on('connect', () => {
-      console.log('Connected to server:', socket.id);
+      console.log('Connected to Tripeye server:', socket.id);
       if (currentUser && activeTripCode) {
         socket.emit('join-trip', {
           tripCode: activeTripCode,
@@ -144,7 +127,7 @@ export default function App() {
       }
     });
 
-    socket.on('peer-location', ({ user, coords }) => {
+    socket.on('peer-location', ({ user, coords, speed }) => {
       setFriendUser(prev => ({ ...prev, ...user }));
       setFriendPos([coords.lat, coords.lng]);
     });
@@ -166,6 +149,11 @@ export default function App() {
       }
     });
 
+    socket.on('sos-received', (sosData) => {
+      setRemoteSosAlert(sosData);
+      playSosSiren();
+    });
+
     socket.on('incoming-call', () => {
       setIsIncomingCall(true);
       setCallStatus('ringing');
@@ -185,7 +173,6 @@ export default function App() {
     return () => socket.disconnect();
   }, [currentUser, activeTripCode]);
 
-  // Real GPS watcher
   useEffect(() => {
     if (!navigator.geolocation) return;
 
@@ -197,33 +184,36 @@ export default function App() {
           accuracy: pos.coords.accuracy
         };
         setUserPos([coords.lat, coords.lng]);
+        if (pos.coords.speed !== null && pos.coords.speed !== undefined) {
+          setUserSpeed(pos.coords.speed);
+        }
 
         if (socketRef.current && activeTripCode) {
           socketRef.current.emit('update-location', {
             tripCode: activeTripCode,
-            coords
+            coords,
+            speed: pos.coords.speed || 0,
+            heading: pos.coords.heading || 0
           });
         }
       },
       (err) => {
-        console.warn('Geolocation warning:', err.message);
+        console.warn('GPS notice:', err.message);
         if (!userPos && destination) {
           setUserPos([destination.lat + 0.005, destination.lng + 0.005]);
         }
       },
-      { enableHighAccuracy: true, maximumAge: 5000, timeout: 10000 }
+      { enableHighAccuracy: true, maximumAge: 3000, timeout: 10000 }
     );
 
     return () => navigator.geolocation.clearWatch(watchId);
   }, [activeTripCode, destination]);
 
-  // Distances
   const destCoords = destination ? [destination.lat, destination.lng] : [0, 0];
   const userDist = userPos ? getDistanceMeters(userPos[0], userPos[1], destCoords[0], destCoords[1]) : 0;
   const friendDist = friendPos ? getDistanceMeters(friendPos[0], friendPos[1], destCoords[0], destCoords[1]) : 0;
   const friendsApartDist = (userPos && friendPos) ? getDistanceMeters(userPos[0], userPos[1], friendPos[0], friendPos[1]) : 0;
 
-  // Arrival detection
   useEffect(() => {
     if (!destination) return;
     const userIn = userDist > 0 && userDist <= destination.geofenceRadius;
@@ -241,7 +231,6 @@ export default function App() {
     }
   }, [userDist, friendDist, friendsApartDist, destination]);
 
-  // Destination Change Handler
   const handleSelectDestination = (dest) => {
     setDestination(dest);
     hasTriggeredArrivalRef.current = false;
@@ -272,7 +261,6 @@ export default function App() {
     });
   };
 
-  // Chat
   const handleSendMessage = (text) => {
     if (!currentUser || !activeTripCode) return;
     const newMsg = {
@@ -290,7 +278,17 @@ export default function App() {
     }
   };
 
-  // Call Handlers
+  const handleBroadcastSos = (sosInfo) => {
+    if (socketRef.current && activeTripCode && currentUser) {
+      socketRef.current.emit('sos-alert', {
+        tripCode: activeTripCode,
+        user: currentUser,
+        coords: sosInfo,
+        address: sosInfo.address
+      });
+    }
+  };
+
   const handleStartCall = async () => {
     if (!friendUser) return;
     setIsIncomingCall(false);
@@ -308,7 +306,7 @@ export default function App() {
         });
       }
     } catch (e) {
-      console.warn('Microphone error:', e);
+      console.warn('Microphone notice:', e);
     }
   };
 
@@ -343,7 +341,6 @@ export default function App() {
 
   return (
     <div className="w-screen h-screen flex flex-col bg-slate-950 text-slate-100 overflow-hidden select-none">
-      {/* Top Navbar */}
       <Navbar
         currentUser={currentUser}
         friendUser={friendUser}
@@ -353,7 +350,7 @@ export default function App() {
         onOpenPlacesSearch={() => setIsPlacesSearchOpen(true)}
         onOpenShareModal={() => setIsShareModalOpen(true)}
         onOpenTripRoom={() => setIsTripRoomOpen(true)}
-        onOpenDetails={() => setIsDetailsOpen(true)}
+        onOpenSos={() => setIsSosOpen(true)}
         onToggleChat={() => {
           setIsChatOpen(!isChatOpen);
           if (!isChatOpen) setUnreadCount(0);
@@ -367,9 +364,22 @@ export default function App() {
         }}
       />
 
-      {/* Main Map with Google Maps Tiles */}
+      {remoteSosAlert && (
+        <div className="bg-rose-600 text-white px-4 py-2.5 flex items-center justify-between z-30 shadow-lg animate-pulse">
+          <div className="flex items-center gap-2 text-xs sm:text-sm font-extrabold">
+            <span className="text-lg">🚨</span>
+            <span>EMERGENCY SOS: {remoteSosAlert.user?.name} needs immediate assistance!</span>
+          </div>
+          <button
+            onClick={() => setRemoteSosAlert(null)}
+            className="px-3 py-1 bg-white text-rose-700 rounded-lg text-xs font-bold shadow hover:bg-slate-100"
+          >
+            Acknowledge
+          </button>
+        </div>
+      )}
+
       <main className="relative flex-1 w-full h-full overflow-hidden">
-        {/* Floating Proximity HUD */}
         <TripHUD
           currentUser={currentUser}
           friendUser={friendUser}
@@ -382,14 +392,22 @@ export default function App() {
           onCallFriend={handleStartCall}
         />
 
-        {/* Real Turn-by-Turn Navigation HUD */}
         <NavigationBanner
           routeData={routeData}
           userPos={userPos}
           destination={destination}
+          transportMode={transportMode}
+          onChangeTransportMode={setTransportMode}
+          userSpeed={userSpeed}
         />
 
-        {/* Arrival Banner */}
+        <RendezvousRadar
+          userPos={userPos}
+          friendPos={friendPos}
+          friendUser={friendUser}
+          onCallFriend={handleStartCall}
+        />
+
         <ArrivalAlertBanner
           isPriyaArrived={isFriendArrived || isUserArrived}
           destination={destination}
@@ -399,7 +417,6 @@ export default function App() {
           }}
         />
 
-        {/* Real Google Maps Tracker */}
         <MapTracker
           destination={destination}
           itinerary={itinerary}
@@ -419,14 +436,15 @@ export default function App() {
             if (socketRef.current && activeTripCode) {
               socketRef.current.emit('update-location', {
                 tripCode: activeTripCode,
-                coords: { lat: coords[0], lng: coords[1] }
+                coords: { lat: coords[0], lng: coords[1] },
+                speed: userSpeed,
+                heading: 0
               });
             }
           }}
         />
       </main>
 
-      {/* Real-time In-Trip Chat */}
       <ChatDrawer
         isOpen={isChatOpen}
         onClose={() => setIsChatOpen(false)}
@@ -437,14 +455,6 @@ export default function App() {
         onCallFriend={handleStartCall}
       />
 
-      {/* Destination Details Guide */}
-      <TripDetailsModal
-        isOpen={isDetailsOpen}
-        onClose={() => setIsDetailsOpen(false)}
-        destination={destination}
-      />
-
-      {/* Places Search Modal */}
       <PlaceSearchModal
         isOpen={isPlacesSearchOpen}
         onClose={() => setIsPlacesSearchOpen(false)}
@@ -454,7 +464,6 @@ export default function App() {
         itinerary={itinerary}
       />
 
-      {/* Real Share Modal */}
       <ShareModal
         isOpen={isShareModalOpen}
         onClose={() => setIsShareModalOpen(false)}
@@ -462,7 +471,15 @@ export default function App() {
         destination={destination}
       />
 
-      {/* Real Login Modal */}
+      <SosModal
+        isOpen={isSosOpen}
+        onClose={() => setIsSosOpen(false)}
+        userPos={userPos}
+        currentUser={currentUser}
+        friendUser={friendUser}
+        onBroadcastSos={handleBroadcastSos}
+      />
+
       <AuthModal
         isOpen={isAuthOpen}
         onLogin={(userData) => {
@@ -471,7 +488,6 @@ export default function App() {
         }}
       />
 
-      {/* Trip Room Modal */}
       <TripRoomModal
         isOpen={isTripRoomOpen}
         onClose={() => setIsTripRoomOpen(false)}
@@ -479,17 +495,16 @@ export default function App() {
         onCreateTrip={(code, dest) => {
           setActiveTripCode(code);
           handleSelectDestination(dest);
-          const newUrl = `${window.location.pathname}?trip=${code}`;
+          const newUrl = window.location.pathname + "?trip=" + code;
           window.history.pushState({}, '', newUrl);
         }}
         onJoinTrip={(code) => {
           setActiveTripCode(code);
-          const newUrl = `${window.location.pathname}?trip=${code}`;
+          const newUrl = window.location.pathname + "?trip=" + code;
           window.history.pushState({}, '', newUrl);
         }}
       />
 
-      {/* Audio Call Modal */}
       <CallModal
         isOpen={isCallOpen}
         onClose={() => setIsCallOpen(false)}
