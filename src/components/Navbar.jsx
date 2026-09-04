@@ -1,5 +1,5 @@
 import React from 'react';
-import { Eye, MapPin, Share2, MessageSquare, Phone, Compass, AlertTriangle } from 'lucide-react';
+import { Eye, MapPin, Share2, MessageSquare, Phone, Compass, AlertTriangle, Cloud, ListChecks, History } from 'lucide-react';
 
 export default function Navbar({
   currentUser,
@@ -10,6 +10,9 @@ export default function Navbar({
   onOpenPlacesSearch,
   onOpenShareModal,
   onOpenTripRoom,
+  onOpenGoogleSync,
+  onOpenChecklist,
+  onOpenSavedTrips,
   onOpenSos,
   onToggleChat,
   unreadCount,
@@ -29,18 +32,19 @@ export default function Navbar({
             </span>
             {activeTripCode && (
               <button
-                onClick={onOpenTripRoom}
-                className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold tracking-wide uppercase bg-amber-500/15 text-amber-300 border border-amber-500/30 hover:bg-amber-500/25 transition"
-                title="Trip Room Code"
+                onClick={onOpenSavedTrips}
+                className="px-2 py-0.5 rounded-full text-[10px] font-mono font-bold tracking-wide uppercase bg-amber-500/15 text-amber-300 border border-amber-500/30 hover:bg-amber-500/25 transition flex items-center gap-1"
+                title="View Saved Trips History"
               >
-                {activeTripCode}
+                <span>{activeTripCode}</span>
+                <History className="w-2.5 h-2.5 opacity-60" />
               </button>
             )}
           </div>
           
           <button
             onClick={onOpenPlacesSearch}
-            className="text-[11px] text-slate-300 hover:text-amber-400 flex items-center gap-1 font-semibold truncate max-w-[150px] sm:max-w-[240px] transition text-left"
+            className="text-[11px] text-slate-300 hover:text-amber-400 flex items-center gap-1 font-semibold truncate max-w-[140px] sm:max-w-[220px] transition text-left"
             title="Click to search or change destinations"
           >
             <MapPin className="w-3 h-3 text-amber-400 shrink-0" />
@@ -51,6 +55,28 @@ export default function Navbar({
       </div>
 
       <div className="flex items-center gap-1.5 sm:gap-2">
+        {/* Google Sync Status button */}
+        <button
+          onClick={onOpenGoogleSync}
+          className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-sky-500/10 hover:bg-sky-500/20 text-sky-300 border border-sky-500/30 text-xs font-bold transition active:scale-95"
+          title="Google & Cloud Sync (Persists all data)"
+        >
+          <Cloud className="w-3.5 h-3.5 text-sky-400" />
+          <span className="hidden sm:inline">Google Sync</span>
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+        </button>
+
+        {/* Shared Checklist button */}
+        <button
+          onClick={onOpenChecklist}
+          className="hidden sm:flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs font-semibold transition"
+          title="Shared Rendezvous Checklist"
+        >
+          <ListChecks className="w-3.5 h-3.5 text-amber-400" />
+          <span>Checklist</span>
+        </button>
+
+        {/* Explore All Places */}
         <button
           onClick={onOpenPlacesSearch}
           className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-bold transition active:scale-95"
@@ -65,6 +91,7 @@ export default function Navbar({
           )}
         </button>
 
+        {/* Real Share Link */}
         <button
           onClick={onOpenShareModal}
           className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold shadow-md shadow-emerald-600/20 transition active:scale-95"
@@ -74,6 +101,7 @@ export default function Navbar({
           <span>Share</span>
         </button>
 
+        {/* Call Friend */}
         <button
           onClick={onCallFriend}
           disabled={!friendUser}
@@ -90,6 +118,7 @@ export default function Navbar({
           </span>
         </button>
 
+        {/* SOS Button */}
         <button
           onClick={onOpenSos}
           className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-400 border border-rose-500/40 text-xs font-extrabold transition active:scale-95"
@@ -99,6 +128,7 @@ export default function Navbar({
           <span>SOS</span>
         </button>
 
+        {/* Chat Drawer Toggle */}
         <button
           onClick={onToggleChat}
           className="relative flex items-center gap-1 px-2.5 sm:px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold transition shadow-sm active:scale-95"
@@ -112,11 +142,12 @@ export default function Navbar({
           )}
         </button>
 
+        {/* Profile Avatar */}
         {currentUser && (
           <div
             onClick={onLogout}
             className="w-8 h-8 rounded-full bg-slate-800 border border-slate-700 hover:border-rose-500/50 flex items-center justify-center text-xs font-bold text-amber-400 cursor-pointer transition ml-1"
-            title={"Logged in as " + currentUser.name + ". Click to logout."}
+            title={"Logged in as " + currentUser.name + " (" + currentUser.phone + "). Click to logout."}
           >
             {currentUser.name.charAt(0).toUpperCase()}
           </div>

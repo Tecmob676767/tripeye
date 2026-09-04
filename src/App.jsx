@@ -8,6 +8,9 @@ import NavigationBanner from './components/NavigationBanner';
 import ArrivalAlertBanner from './components/ArrivalAlertBanner';
 import RendezvousRadar from './components/RendezvousRadar';
 import SosModal from './components/SosModal';
+import GoogleSyncModal from './components/GoogleSyncModal';
+import TripChecklistModal from './components/TripChecklistModal';
+import SavedTripsModal from './components/SavedTripsModal';
 import ChatDrawer from './components/ChatDrawer';
 import TripDetailsModal from './components/TripDetailsModal';
 import AuthModal from './components/AuthModal';
@@ -19,17 +22,24 @@ import { PRESET_DESTINATIONS, getDistanceMeters } from './utils/geo';
 import { playArrivalSound, playMessageSound, playSosSiren } from './utils/audio';
 
 export default function App() {
+  // Authentication with localStorage persistence
   const [currentUser, setCurrentUser] = useState(() => {
-    const saved = localStorage.getItem('tripeye_user');
-    return saved ? JSON.parse(saved) : null;
+    try {
+      const saved = localStorage.getItem('tripeye_user');
+      return saved ? JSON.parse(saved) : null;
+    } catch (e) { return null; }
   });
   const [isAuthOpen, setIsAuthOpen] = useState(!currentUser);
 
+  // Active Trip Code: Priority URL param -> localStorage -> Default 'TEMPLE-101'
   const [activeTripCode, setActiveTripCode] = useState(() => {
     const params = new URLSearchParams(window.location.search);
-    return params.get('trip') || 'TEMPLE-101';
+    const urlTrip = params.get('trip');
+    if (urlTrip) return urlTrip;
+    return localStorage.getItem('tripeye_active_trip') || 'TEMPLE-101';
   });
 
+  // Destination with persistence
   const [destination, setDestination] = useState(() => {
     const params = new URLSearchParams(window.location.search);
     const destId = params.get('dest');
@@ -37,23 +47,72 @@ export default function App() {
       const found = PRESET_DESTINATIONS.find(d => d.id === destId);
       if (found) return found;
     }
+    try {
+      const savedDest = localStorage.getItem('tripeye_destination_' + activeTripCode);
+      if (savedDest) return JSON.parse(savedDest);
+    } catch (e) {}
     return PRESET_DESTINATIONS[0];
   });
 
-  const [itinerary, setItinerary] = useState(() => [PRESET_DESTINATIONS[0]]);
+  // Itinerary with persistence
+  const [itinerary, setItinerary] = useState(() => {
+    try {
+      const saved = localStorage.getItem('tripeye_itinerary_' + activeTripCode);
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return [destination || PRESET_DESTINATIONS[0]];
+  });
 
+  // Shared Checklist with persistence
+  const [checklist, setChecklist] = useState(() => {
+    try {
+      const saved = localStorage.getItem('tripeye_checklist_' + activeTripCode);
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return [
+      { id: 1, text: 'Deposit mobile phones & electronics at Counter 1', done: false },
+      { id: 2, text: 'Submit shoes at Shoe Stand (Gate 1)', done: false },
+      { id: 3, text: 'Purchase Darshan & Exhibition tokens', done: false },
+      { id: 4, text: 'Meet at Entrance Courtyard', done: false }
+    ];
+  });
+
+  // Saved Trips History
+  const [savedTrips, setSavedTrips] = useState(() => {
+    try {
+      const saved = localStorage.getItem('tripeye_saved_trips');
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return [
+      { tripCode: 'TEMPLE-101', destinationName: 'Akshardham Temple, Delhi', date: new Date().toLocaleDateString() }
+    ];
+  });
+
+  // Navigation & Route data
   const [transportMode, setTransportMode] = useState('driving');
   const [routeData, setRouteData] = useState(null);
   const [roadRouteCoordinates, setRoadRouteCoordinates] = useState([]);
   const [userSpeed, setUserSpeed] = useState(0);
 
+  // Modals & Panels
   const [isTripRoomOpen, setIsTripRoomOpen] = useState(false);
   const [isPlacesSearchOpen, setIsPlacesSearchOpen] = useState(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+  const [isGoogleSyncOpen, setIsGoogleSyncOpen] = useState(false);
+  const [isChecklistOpen, setIsChecklistOpen] = useState(false);
+  const [isSavedTripsOpen, setIsSavedTripsOpen] = useState(false);
   const [isSosOpen, setIsSosOpen] = useState(false);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
-  const [messages, setMessages] = useState([]);
+
+  // Messages with persistence
+  const [messages, setMessages] = useState(() => {
+    try {
+      const saved = localStorage.getItem('tripeye_messages_' + activeTripCode);
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return [];
+  });
 
   const [friendUser, setFriendUser] = useState(null);
   const [userPos, setUserPos] = useState(null);
@@ -72,6 +131,52 @@ export default function App() {
   const [remoteSosAlert, setRemoteSosAlert] = useState(null);
   const socketRef = useRef(null);
 
+  // Synchronize localStorage & URL on activeTripCode / destination / itinerary changes
+  useEffect(() => {
+    if (activeTripCode) {
+      localStorage.setItem('tripeye_active_trip', activeTripCode);
+      const url = window.location.pathname + "?trip=" + activeTripCode + (destination ? ("&dest=" + (destination.id || '')) : '');
+      window.history.replaceState({}, '', url);
+
+      // Save to savedTrips
+      setSavedTrips(prev => {
+        const exists = prev.some(t => t.tripCode === activeTripCode);
+        const updated = exists ? prev : [{
+          tripCode: activeTripCode,
+          destinationName: destination?.name || 'Rendezvous',
+          date: new Date().toLocaleDateString()
+        }, ...prev];
+        localStorage.setItem('tripeye_saved_trips', JSON.stringify(updated));
+        return updated;
+      });
+    }
+  }, [activeTripCode, destination]);
+
+  useEffect(() => {
+    if (destination && activeTripCode) {
+      localStorage.setItem('tripeye_destination_' + activeTripCode, JSON.stringify(destination));
+    }
+  }, [destination, activeTripCode]);
+
+  useEffect(() => {
+    if (itinerary && activeTripCode) {
+      localStorage.setItem('tripeye_itinerary_' + activeTripCode, JSON.stringify(itinerary));
+    }
+  }, [itinerary, activeTripCode]);
+
+  useEffect(() => {
+    if (checklist && activeTripCode) {
+      localStorage.setItem('tripeye_checklist_' + activeTripCode, JSON.stringify(checklist));
+    }
+  }, [checklist, activeTripCode]);
+
+  useEffect(() => {
+    if (messages && activeTripCode) {
+      localStorage.setItem('tripeye_messages_' + activeTripCode, JSON.stringify(messages));
+    }
+  }, [messages, activeTripCode]);
+
+  // Turn-by-turn route fetcher
   const fetchRoadRoute = async (fromCoords, toCoords, mode = transportMode) => {
     if (!fromCoords || !toCoords) return;
     try {
@@ -93,6 +198,7 @@ export default function App() {
     }
   }, [userPos, destination, transportMode]);
 
+  // Socket.io Real-time connection
   useEffect(() => {
     const socket = io('/', {
       path: '/socket.io',
@@ -112,10 +218,24 @@ export default function App() {
       }
     });
 
-    socket.on('trip-state', ({ users, destination: remoteDest, itinerary: remoteItin }) => {
+    socket.on('trip-state', ({ users, destination: remoteDest, itinerary: remoteItin, messages: remoteMsgs, checklist: remoteChecklist }) => {
       if (remoteDest) setDestination(remoteDest);
-      if (remoteItin) setItinerary(remoteItin);
+      if (remoteItin && remoteItin.length > 0) setItinerary(remoteItin);
+      if (remoteMsgs && remoteMsgs.length > 0) setMessages(remoteMsgs);
+      if (remoteChecklist && remoteChecklist.length > 0) setChecklist(remoteChecklist);
 
+      const otherUser = users.find(u => u.id !== currentUser?.id);
+      if (otherUser) {
+        setFriendUser(otherUser);
+        if (otherUser.lat && otherUser.lng) {
+          setFriendPos([otherUser.lat, otherUser.lng]);
+        }
+      } else {
+        setFriendUser(null);
+      }
+    });
+
+    socket.on('users-updated', ({ users }) => {
       const otherUser = users.find(u => u.id !== currentUser?.id);
       if (otherUser) {
         setFriendUser(otherUser);
@@ -139,6 +259,10 @@ export default function App() {
 
     socket.on('itinerary-updated', (newItin) => {
       setItinerary(newItin);
+    });
+
+    socket.on('checklist-updated', (newChecklist) => {
+      setChecklist(newChecklist);
     });
 
     socket.on('receive-message', (msg) => {
@@ -173,6 +297,7 @@ export default function App() {
     return () => socket.disconnect();
   }, [currentUser, activeTripCode]);
 
+  // GPS Watcher
   useEffect(() => {
     if (!navigator.geolocation) return;
 
@@ -259,6 +384,34 @@ export default function App() {
       }
       return updated;
     });
+  };
+
+  const handleUpdateChecklist = (newChecklist) => {
+    setChecklist(newChecklist);
+    if (socketRef.current && activeTripCode) {
+      socketRef.current.emit('update-checklist', { tripCode: activeTripCode, checklist: newChecklist });
+    }
+  };
+
+  const handleGoogleSync = async (account) => {
+    try {
+      await fetch('/api/sync/google-backup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user: currentUser,
+          tripCode: activeTripCode,
+          tripData: {
+            destination,
+            itinerary,
+            checklist,
+            messages
+          }
+        })
+      });
+    } catch (e) {
+      console.warn('Sync notice:', e);
+    }
   };
 
   const handleSendMessage = (text) => {
@@ -350,6 +503,9 @@ export default function App() {
         onOpenPlacesSearch={() => setIsPlacesSearchOpen(true)}
         onOpenShareModal={() => setIsShareModalOpen(true)}
         onOpenTripRoom={() => setIsTripRoomOpen(true)}
+        onOpenGoogleSync={() => setIsGoogleSyncOpen(true)}
+        onOpenChecklist={() => setIsChecklistOpen(true)}
+        onOpenSavedTrips={() => setIsSavedTripsOpen(true)}
         onOpenSos={() => setIsSosOpen(true)}
         onToggleChat={() => {
           setIsChatOpen(!isChatOpen);
@@ -471,6 +627,46 @@ export default function App() {
         destination={destination}
       />
 
+      <GoogleSyncModal
+        isOpen={isGoogleSyncOpen}
+        onClose={() => setIsGoogleSyncOpen(false)}
+        currentUser={currentUser}
+        activeTripCode={activeTripCode}
+        destination={destination}
+        itinerary={itinerary}
+        onTriggerSync={handleGoogleSync}
+      />
+
+      <TripChecklistModal
+        isOpen={isChecklistOpen}
+        onClose={() => setIsChecklistOpen(false)}
+        checklist={checklist}
+        onUpdateChecklist={handleUpdateChecklist}
+        destination={destination}
+      />
+
+      <SavedTripsModal
+        isOpen={isSavedTripsOpen}
+        onClose={() => setIsSavedTripsOpen(false)}
+        activeTripCode={activeTripCode}
+        savedTrips={savedTrips}
+        onSelectTrip={(code) => {
+          setActiveTripCode(code);
+          setIsSavedTripsOpen(false);
+        }}
+        onCreateNewTrip={() => {
+          setIsSavedTripsOpen(false);
+          setIsTripRoomOpen(true);
+        }}
+        onDeleteTrip={(code) => {
+          setSavedTrips(prev => {
+            const updated = prev.filter(t => t.tripCode !== code);
+            localStorage.setItem('tripeye_saved_trips', JSON.stringify(updated));
+            return updated;
+          });
+        }}
+      />
+
       <SosModal
         isOpen={isSosOpen}
         onClose={() => setIsSosOpen(false)}
@@ -495,13 +691,9 @@ export default function App() {
         onCreateTrip={(code, dest) => {
           setActiveTripCode(code);
           handleSelectDestination(dest);
-          const newUrl = window.location.pathname + "?trip=" + code;
-          window.history.pushState({}, '', newUrl);
         }}
         onJoinTrip={(code) => {
           setActiveTripCode(code);
-          const newUrl = window.location.pathname + "?trip=" + code;
-          window.history.pushState({}, '', newUrl);
         }}
       />
 
