@@ -95,8 +95,12 @@ export default function App() {
   });
 
   const [friendUser, setFriendUser] = useState(null);
-  const [userPos, setUserPos] = useState(null);
+  const [userPos, setUserPos] = useState(() => {
+    if (destination) return [destination.lat + 0.003, destination.lng + 0.003];
+    return [28.6127, 77.2773];
+  });
   const [friendPos, setFriendPos] = useState(null);
+
   const [isCallOpen, setIsCallOpen] = useState(false);
   const [isIncomingCall, setIsIncomingCall] = useState(false);
   const [callStatus, setCallStatus] = useState('calling');
@@ -128,6 +132,30 @@ export default function App() {
   useEffect(() => { if (checklist && activeTripCode) localStorage.setItem('tripeye_checklist_' + activeTripCode, JSON.stringify(checklist)); }, [checklist, activeTripCode]);
   useEffect(() => { if (messages && activeTripCode) localStorage.setItem('tripeye_messages_' + activeTripCode, JSON.stringify(messages)); }, [messages, activeTripCode]);
 
+  // GPS watcher
+  useEffect(() => {
+    if (!navigator.geolocation) return;
+
+    const onPosSuccess = (pos) => {
+      const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy };
+      setUserPos([coords.lat, coords.lng]);
+      if (pos.coords.speed != null) setUserSpeed(pos.coords.speed);
+      if (currentUser && socketRef.current) {
+        socketRef.current.emit('update-location', {
+          tripCode: activeTripCode,
+          user: currentUser,
+          coords,
+          speed: pos.coords.speed || 0,
+          heading: pos.coords.heading || 0
+        });
+      }
+    };
+
+    navigator.geolocation.getCurrentPosition(onPosSuccess, () => {}, { enableHighAccuracy: true, timeout: 5000 });
+    const id = navigator.geolocation.watchPosition(onPosSuccess, () => {}, { enableHighAccuracy: true, maximumAge: 3000, timeout: 10000 });
+    return () => navigator.geolocation.clearWatch(id);
+  }, [activeTripCode, currentUser]);
+
   // OSRM road routing
   const fetchRoadRoute = async (from, to, mode = transportMode) => {
     if (!from || !to) return;
@@ -145,36 +173,63 @@ export default function App() {
     if (userPos && destination) fetchRoadRoute(userPos, [destination.lat, destination.lng], transportMode);
   }, [userPos, destination, transportMode]);
 
-  // Socket.io real-time live location
+  // Socket.io real-time live location & dual sync
   useEffect(() => {
-    const socket = io('/', { path: '/socket.io', transports: ['websocket', 'polling'] });
+    const socket = io('/', {
+      path: '/socket.io',
+      transports: ['websocket', 'polling'],
+      reconnectionAttempts: 20,
+      reconnectionDelay: 1000
+    });
     socketRef.current = socket;
 
-    socket.on('connect', () => {
+    const emitJoin = () => {
       if (currentUser && activeTripCode) {
-        socket.emit('join-trip', { tripCode: activeTripCode, user: currentUser, destination, itinerary });
+        socket.emit('join-trip', {
+          tripCode: activeTripCode,
+          user: currentUser,
+          destination,
+          itinerary,
+          coords: userPos ? { lat: userPos[0], lng: userPos[1] } : null
+        });
       }
-    });
+    };
+
+    if (socket.connected) {
+      emitJoin();
+    }
+    socket.on('connect', emitJoin);
+
+    const handleUsersList = (users) => {
+      if (!users || !Array.isArray(users)) return;
+      const other = users.find(u => u.id !== currentUser?.id);
+      if (other) {
+        setFriendUser(other);
+        if (other.lat != null && other.lng != null) {
+          setFriendPos([other.lat, other.lng]);
+        } else if (destination) {
+          setFriendPos([destination.lat - 0.003, destination.lng - 0.003]);
+        }
+      }
+    };
 
     socket.on('trip-state', ({ users, destination: d, itinerary: it, messages: ms, checklist: ch }) => {
       if (d) setDestination(d);
       if (it?.length) setItinerary(it);
       if (ms?.length) setMessages(ms);
       if (ch?.length) setChecklist(ch);
-      const other = users.find(u => u.id !== currentUser?.id);
-      setFriendUser(other || null);
-      if (other?.lat && other?.lng) setFriendPos([other.lat, other.lng]);
+      handleUsersList(users);
     });
 
     socket.on('users-updated', ({ users }) => {
-      const other = users.find(u => u.id !== currentUser?.id);
-      setFriendUser(other || null);
-      if (other?.lat && other?.lng) setFriendPos([other.lat, other.lng]);
+      handleUsersList(users);
     });
 
     socket.on('peer-location', ({ user, coords }) => {
       setFriendUser(prev => ({ ...prev, ...user }));
-      setFriendPos([coords.lat, coords.lng]);
+      if (coords && coords.lat != null && coords.lng != null) {
+        setFriendPos([coords.lat, coords.lng]);
+      }
     });
 
     socket.on('destination-updated', d => { setDestination(d); hasTriggeredArrivalRef.current = false; });
@@ -195,28 +250,45 @@ export default function App() {
       localStreamRef.current?.getTracks().forEach(t => t.stop());
     });
 
-    return () => socket.disconnect();
-  }, [currentUser, activeTripCode]);
-
-  // High-accuracy GPS watcher
-  useEffect(() => {
-    if (!navigator.geolocation) return;
-    const id = navigator.geolocation.watchPosition(
-      pos => {
-        const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy };
-        setUserPos([coords.lat, coords.lng]);
-        if (pos.coords.speed != null) setUserSpeed(pos.coords.speed);
-        socketRef.current?.emit('update-location', {
-          tripCode: activeTripCode, coords, speed: pos.coords.speed || 0, heading: pos.coords.heading || 0
+    // Continuous location broadcast every 2.5 seconds
+    const broadcastInterval = setInterval(() => {
+      if (currentUser && userPos && socket.connected) {
+        socket.emit('update-location', {
+          tripCode: activeTripCode,
+          user: currentUser,
+          coords: { lat: userPos[0], lng: userPos[1] },
+          speed: userSpeed,
+          heading: 0
         });
-      },
-      err => {
-        if (!userPos && destination) setUserPos([destination.lat + 0.005, destination.lng + 0.005]);
-      },
-      { enableHighAccuracy: true, maximumAge: 2000, timeout: 8000 }
-    );
-    return () => navigator.geolocation.clearWatch(id);
-  }, [activeTripCode, destination]);
+      }
+    }, 2500);
+
+    // HTTP Heartbeat & Sync fallback every 3.5 seconds
+    const httpSyncInterval = setInterval(async () => {
+      if (!activeTripCode) return;
+      try {
+        const res = await fetch('/api/trip/' + activeTripCode + '/sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            user: currentUser,
+            coords: userPos ? { lat: userPos[0], lng: userPos[1] } : null,
+            speed: userSpeed
+          })
+        });
+        const data = await res.json();
+        if (data.success && data.users) {
+          handleUsersList(data.users);
+        }
+      } catch {}
+    }, 3500);
+
+    return () => {
+      clearInterval(broadcastInterval);
+      clearInterval(httpSyncInterval);
+      socket.disconnect();
+    };
+  }, [currentUser, activeTripCode, destination, itinerary]);
 
   const destCoords = destination ? [destination.lat, destination.lng] : [0, 0];
   const userDist = userPos ? getDistanceMeters(userPos[0], userPos[1], destCoords[0], destCoords[1]) : 0;
@@ -346,7 +418,7 @@ export default function App() {
           roadRouteCoordinates={roadRouteCoordinates}
           onMapClickToSetPos={(coords) => {
             setUserPos(coords);
-            socketRef.current?.emit('update-location', { tripCode: activeTripCode, coords: { lat: coords[0], lng: coords[1] }, speed: userSpeed, heading: 0 });
+            socketRef.current?.emit('update-location', { tripCode: activeTripCode, user: currentUser, coords: { lat: coords[0], lng: coords[1] }, speed: userSpeed, heading: 0 });
           }} />
       </main>
 
